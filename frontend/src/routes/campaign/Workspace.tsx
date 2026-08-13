@@ -1,29 +1,21 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useParams } from "react-router-dom";
+import { NavLink, Outlet, useNavigate, useParams } from "react-router-dom";
 import { api, type Campaign, type Character, type PlaySession } from "../../lib/api";
-
-/** Everything about a campaign lives under one workspace.
- *
- * The tabs are not decoration - they are the app's actual nouns. A campaign is
- * a party, a set of things they carry, what they have learned, and the session
- * in progress. Flat routes made those feel unrelated. */
-const TABS = [
-  { to: "", label: "Play", end: true },
-  { to: "party", label: "Party" },
-  { to: "inventory", label: "Inventory" },
-  { to: "journal", label: "Journal" },
-  { to: "codex", label: "Codex" },
-];
 
 export interface WorkspaceContext {
   campaign: Campaign;
   characters: Character[];
   sessions: PlaySession[];
+  activeSession: PlaySession | null;
   reload: () => Promise<void>;
 }
 
+/** The campaign row: identity on the left, live-session tabs in the middle,
+ *  campaign-level pages on the right. Sessions sits apart from the five because
+ *  it is about the campaign rather than about the turn you are taking. */
 export function Workspace() {
   const { campaignId } = useParams<{ campaignId: string }>();
+  const navigate = useNavigate();
   const [context, setContext] = useState<WorkspaceContext | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -34,48 +26,85 @@ export function Workspace() {
       api.characters.list(campaignId),
       api.sessions.list(campaignId),
     ]);
-    setContext({ campaign, characters, sessions, reload: load });
+    setContext({
+      campaign,
+      characters,
+      sessions,
+      activeSession: sessions.find((s) => s.status === "active") ?? null,
+      reload: load,
+    });
   };
 
   useEffect(() => {
     void load().catch((e) => setError((e as Error).message));
   }, [campaignId]);
 
-  if (error) return <p className="notice notice--bad">{error}</p>;
-  if (!context) return <p className="notice">Loading campaign</p>;
+  // Alt+1..5 across the tabs, Alt+6 to sessions. Reachable mid-session without
+  // taking your hands off the composer.
+  useEffect(() => {
+    if (!campaignId) return;
+    const routes = ["", "party", "inventory", "journal", "codex", "sessions"];
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey) return;
+      const n = Number(e.key);
+      if (n >= 1 && n <= routes.length) {
+        e.preventDefault();
+        navigate(`/campaigns/${campaignId}/${routes[n - 1]}`);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [campaignId, navigate]);
 
-  const active = context.sessions.find((s) => s.status === "active");
+  if (error) return <div className="pane"><p className="notice notice--bad">{error}</p></div>;
+  if (!context) return <div className="pane"><p className="notice">Loading campaign</p></div>;
+
+  const base = `/campaigns/${campaignId}`;
+  const roster = context.characters.filter((c) => c.active);
+  const items = roster.reduce((n, c) => n + c.sheet.inventory.length, 0);
+
+  const TABS = [
+    { to: "", label: "Play", end: true },
+    { to: "party", label: "Party", count: roster.length },
+    { to: "inventory", label: "Inventory", count: items },
+    { to: "journal", label: "Journal" },
+    { to: "codex", label: "Codex" },
+  ];
 
   return (
-    <div className="workspace">
-      <header className="workspace__head">
-        <div>
-          <Link className="crumb" to="/">
-            Campaigns
-          </Link>
-          <h1 className="workspace__title">{context.campaign.name}</h1>
+    <>
+      <div className="tabbar">
+        <div className="tabbar__identity">
+          <span className="tabbar__name">{context.campaign.name}</span>
+          <span className="label">
+            {context.campaign.play_mode} · {roster.length}{" "}
+            {roster.length === 1 ? "character" : "characters"}
+          </span>
         </div>
-        <span className="workspace__state">
-          {active ? `Session ${active.number} in progress` : "No session running"}
-        </span>
-      </header>
 
-      <nav className="tabs">
-        {TABS.map((tab) => (
-          <NavLink
-            key={tab.label}
-            to={tab.to}
-            end={tab.end}
-            className={({ isActive }) => `tab ${isActive ? "tab--on" : ""}`}
-          >
-            {tab.label}
+        <nav className="tabbar__tabs" aria-label="Live session">
+          {TABS.map((t) => (
+            <NavLink key={t.label} to={`${base}/${t.to}`} end={t.end} className="tab">
+              {t.label}
+              {t.count != null && <span className="tab__count">{t.count}</span>}
+            </NavLink>
+          ))}
+        </nav>
+
+        <div className="tabbar__pages">
+          <span className="label">
+            {context.activeSession
+              ? `Session ${context.activeSession.number} live`
+              : "No session"}
+          </span>
+          <span className="tabbar__sep" />
+          <NavLink to={`${base}/sessions`} className="tab tab--page">
+            Sessions
           </NavLink>
-        ))}
-      </nav>
-
-      <div className="workspace__body">
-        <Outlet context={context} />
+        </div>
       </div>
-    </div>
+
+      <Outlet context={context} />
+    </>
   );
 }

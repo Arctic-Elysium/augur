@@ -2,15 +2,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { SessionProvider } from "./lib/session";
-import { Shell } from "./routes/Shell";
+import { AppShell } from "./routes/AppShell";
 import { CampaignList } from "./routes/CampaignList";
-import { Play } from "./routes/Play";
 import { Workspace } from "./routes/campaign/Workspace";
 import { PlayTab } from "./routes/campaign/PlayTab";
 import { PartyTab } from "./routes/campaign/PartyTab";
 import { InventoryTab } from "./routes/campaign/InventoryTab";
 import { JournalTab } from "./routes/campaign/JournalTab";
 import { CodexTab } from "./routes/campaign/CodexTab";
+import { SessionsTab } from "./routes/campaign/SessionsTab";
+import "./styles/app-shell.css";
 import "./styles/tokens.css";
 
 createRoot(document.getElementById("root")!).render(
@@ -18,7 +19,7 @@ createRoot(document.getElementById("root")!).render(
     <SessionProvider>
       <BrowserRouter>
         <Routes>
-          <Route element={<Shell />}>
+          <Route element={<AppShell />}>
             <Route index element={<CampaignList />} />
             <Route path="campaigns/:campaignId" element={<Workspace />}>
               <Route index element={<PlayTab />} />
@@ -26,9 +27,8 @@ createRoot(document.getElementById("root")!).render(
               <Route path="inventory" element={<InventoryTab />} />
               <Route path="journal" element={<JournalTab />} />
               <Route path="codex" element={<CodexTab />} />
+              <Route path="sessions" element={<SessionsTab />} />
             </Route>
-            {/* Standalone, for reading a finished session. */}
-            <Route path="play/:sessionId" element={<Play />} />
           </Route>
         </Routes>
       </BrowserRouter>

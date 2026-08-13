@@ -48,6 +48,7 @@ export interface Campaign {
   premise: string | null;
   play_mode: PlayMode;
   status: string;
+  ruleset_id?: string;
 }
 
 export interface CharacterSheet {
@@ -100,6 +101,11 @@ export interface PlaySession {
   status: "active" | "ended";
   scene_id: string;
   active_character_id: string | null;
+  title: string | null;
+  summary: string | null;
+  created_at: string | null;
+  ended_at: string | null;
+  turn_count: number;
 }
 
 export interface TurnRecord {
@@ -206,6 +212,13 @@ export const api = {
     end: (id: string) =>
       request<PlaySession>(`/sessions/${id}/end`, { method: "POST" }),
     turns: (id: string) => request<TurnRecord[]>(`/sessions/${id}/turns`),
+    rename: (id: string, title: string) =>
+      request<PlaySession>(`/sessions/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      }),
+    remove: (id: string) =>
+      request<void>(`/sessions/${id}`, { method: "DELETE" }),
     spotlight: (id: string, characterId: string | null) =>
       request<PlaySession>(`/sessions/${id}/spotlight`, {
         method: "POST",

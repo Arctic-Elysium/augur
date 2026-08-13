@@ -9,9 +9,7 @@
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
     "skipLibCheck": true,
-    "noEmit": true,
-    "baseUrl": ".",
-    "paths": { "@/*": ["src/*"] }
+    "noEmit": true
   },
   "include": ["src"]
 }
