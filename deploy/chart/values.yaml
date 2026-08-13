@@ -1,0 +1,71 @@
+nameOverride: ""
+replicaCount: 1
+
+image:
+  repository: docker.io/arcticelysium/augur-backend
+  tag: latest
+  pullPolicy: Always
+
+imagePullSecrets: []
+
+env:
+  ENVIRONMENT: prod
+  BASE_URL: https://augur.elysium-archive.com
+  FRONTEND_URL: https://augur.elysium-archive.com
+  OIDC_ISSUER: https://auth.elysium-archive.com/oidc
+  OIDC_CLIENT_ID: 5nMDct_UL9DnUDyw
+  OIDC_ADMIN_GROUP: auth_admins
+  AI_CONFIG_PATH: config/ai_routing.yaml
+  STATIC_DIR: /srv/static
+
+existingSecret: augur-secrets
+
+# ---------------------------------------------------------------- database
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  database: augur
+  user: augur
+  storage: 8Gi
+  storageClass: local-path
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+# ---------------------------------------------------------------- migrations
+migrations:
+  enabled: true
+
+# ---------------------------------------------------------------- app
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 768Mi
+
+gateway:
+  enabled: true
+  name: traefik-gateway
+  namespace: traefik
+  hostname: augur.elysium-archive.com
+
+serviceMonitor:
+  enabled: true
+  interval: 30s
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

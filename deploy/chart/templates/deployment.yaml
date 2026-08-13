@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "augur.fullname" . }}
+  labels: {{- include "augur.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  # One pod at a time: a new pod migrating the schema must not run alongside an
+  # old pod still serving the previous one.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "augur.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "augur.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll pods when config changes so env edits actually take effect.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext: {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if or (.Values.postgres).enabled (.Values.migrations).enabled }}
+      initContainers:
+        {{- if (.Values.postgres).enabled }}
+        # Postgres and this Deployment are created together, so wait rather
+        # than crash-loop through the backoff on connection refusals.
+        - name: wait-for-postgres
+          image: {{ (.Values.postgres).image | default "postgres:16-alpine" }}
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ include "augur.postgresHost" . }} -U {{ (.Values.postgres).user | default "augur" }} -q; do
+                echo "waiting for postgres..."
+                sleep 2
+              done
+              echo "postgres is up"
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+        {{- end }}
+        {{- if (.Values.migrations).enabled }}
+        # Migrations run here rather than as a Helm pre-install hook.
+        #
+        # Hooks are created *before* regular resources, so a hook that waits on
+        # the bundled Postgres deadlocks on first install - the database it is
+        # waiting for cannot be created until the hook finishes. An init
+        # container is ordered naturally: the pod does not serve until the
+        # schema is current, and it works identically on install and upgrade.
+        #
+        # Safe at replicaCount 1 with strategy Recreate. If you scale out,
+        # Alembic's version table plus Postgres row locking makes concurrent
+        # runs survivable, but move this back to a hook at that point.
+        - name: migrate
+          image: {{ include "augur.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["alembic", "upgrade", "head"]
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          envFrom: {{- include "augur.envFrom" . | nindent 12 }}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ include "augur.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext: {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom: {{- include "augur.envFrom" . | nindent 12 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

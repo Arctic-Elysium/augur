@@ -1,0 +1,102 @@
+{{- if (.Values.postgres).enabled }}
+{{- /*
+  Bundled Postgres. Single replica, one PVC, no HA - correct for a personal
+  campaign database and honest about what it is.
+
+  Storage note: do NOT put this on NFS. Postgres relies on POSIX file locking
+  and fsync semantics that NFS does not reliably provide; the failure mode is
+  silent corruption rather than a clean error. Use local-path (or any
+  block-backed class) and pin the pod to the node holding the volume.
+
+  Set postgres.enabled=false to point at an external instance instead - only
+  DATABASE_URL in the secret has to change.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "augur.postgresHost" . }}
+  labels: {{- include "augur.labels" . | nindent 4 }}
+spec:
+  # Headless: the StatefulSet pod gets a stable DNS name and we never want a
+  # load-balanced VIP in front of a single database.
+  clusterIP: None
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+  selector: {{- include "augur.postgresSelectorLabels" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "augur.postgresHost" . }}
+  labels: {{- include "augur.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "augur.postgresHost" . }}
+  replicas: 1
+  selector:
+    matchLabels: {{- include "augur.postgresSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "augur.postgresSelectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.postgres.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.existingSecret }}
+                  key: POSTGRES_PASSWORD
+            # The image only initialises a fresh cluster when PGDATA is empty,
+            # so a subdirectory avoids tripping over lost+found on some volumes.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgres.user }}"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "{{ .Values.postgres.user }}"]
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources: {{- toYaml .Values.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.postgres.storageClass }}
+        storageClassName: {{ .Values.postgres.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}
+{{- end }}

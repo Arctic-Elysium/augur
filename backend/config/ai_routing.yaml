@@ -1,0 +1,56 @@
+# Capability -> backend routing.
+#
+# Swapping Golem in later is an edit to this file: add the backend, then shift
+# weight on one capability at a time and compare. Validation runs at startup, so
+# a backend that can't satisfy a capability's requirements fails fast.
+
+backends:
+  claude:
+    kind: anthropic
+    model: claude-sonnet-4-6
+  claude_deep:
+    kind: anthropic
+    model: claude-opus-4-6
+  # golem:
+  #   kind: openai_compat
+  #   base_url: http://golem.golem.svc.cluster.local:8000/v1
+  #   model: golem-gm-v1
+
+capabilities:
+  generate_world:
+    - backend: claude_deep
+      model: claude-opus-4-6
+  generate_region:
+    - backend: claude_deep
+      model: claude-opus-4-6
+  generate_location:
+    - backend: claude
+      model: claude-sonnet-4-6
+  generate_encounter:
+    - backend: claude
+      model: claude-sonnet-4-6
+  narrate_scene:
+    - backend: claude
+      model: claude-sonnet-4-6
+  resolve_turn:
+    - backend: claude
+      model: claude-sonnet-4-6
+  extract_entities:
+    - backend: claude
+      model: claude-sonnet-4-6
+  summarize:
+    - backend: claude
+      model: claude-sonnet-4-6
+  gm_suggest:
+    - backend: claude
+      model: claude-sonnet-4-6
+
+  # Example of a staged Golem rollout:
+  # extract_entities:
+  #   - backend: golem
+  #     model: golem-gm-v1
+  #     weight: 20
+  #     fallback: claude
+  #   - backend: claude
+  #     model: claude-sonnet-4-6
+  #     weight: 80
