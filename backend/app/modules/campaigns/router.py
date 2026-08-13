@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.core.auth.deps import DbDep, PrincipalDep
-from app.core.errors import NotFoundError
+from app.core.errors import ForbiddenError, NotFoundError
 from app.modules.campaigns.models import (
     Campaign,
     CampaignMember,
@@ -15,7 +15,6 @@ from app.modules.campaigns.models import (
     PlayMode,
 )
 from app.modules.identity.service import IdentityService
-from app.modules.rules import registry
 
 router = APIRouter()
 
@@ -24,7 +23,7 @@ class CampaignCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     premise: str | None = None
     play_mode: PlayMode = PlayMode.SOLO
-    ruleset_id: str = "d20"
+    ruleset_id: str = "core"
 
 
 class CampaignOut(BaseModel):
@@ -42,7 +41,6 @@ async def create_campaign(
     payload: CampaignCreate, db: DbDep, principal: PrincipalDep
 ) -> Campaign:
     user = await IdentityService(db).upsert_from_principal(principal)
-    registry.get(payload.ruleset_id)
     campaign = Campaign(
         owner_id=user.id,
         name=payload.name,
@@ -72,6 +70,30 @@ async def list_campaigns(db: DbDep, principal: PrincipalDep) -> list[Campaign]:
         .order_by(Campaign.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+@router.delete("/{campaign_id}", status_code=204)
+async def delete_campaign(
+    campaign_id: uuid.UUID, db: DbDep, principal: PrincipalDep
+) -> None:
+    """Removes a campaign and everything under it.
+
+    Owner only - a player who was invited should not be able to delete the
+    table. Cascades to characters, sessions, turns, entities, canon and notes,
+    which is why the client confirms with the campaign's name typed out rather
+    than a plain yes.
+    """
+    user = await IdentityService(db).get_by_subject(principal.subject)
+    if user is None:
+        raise NotFoundError("campaign not found")
+
+    campaign = await db.get(Campaign, campaign_id)
+    if campaign is None:
+        raise NotFoundError("campaign not found")
+    if campaign.owner_id != user.id:
+        raise ForbiddenError("only the owner can delete a campaign")
+
+    await db.delete(campaign)
 
 
 @router.get("/{campaign_id}", response_model=CampaignOut)
