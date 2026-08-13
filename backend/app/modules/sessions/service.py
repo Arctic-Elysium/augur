@@ -251,7 +251,11 @@ class SessionService:
         prior = result.scalar_one_or_none()
         if prior is None:
             return []
-        return await self.recent_exchanges(prior.id, limit=200)
+        # Capped, and only the tail. Once a session has a summary the ladder
+        # carries its substance; what the verbatim tail adds is continuity with
+        # the moment you stopped, which is the last few exchanges, not all of
+        # them. Uncapped, this grew with how long you played last time.
+        return await self.recent_exchanges(prior.id, limit=40)
 
     # ------------------------------------------------------------ engine
 

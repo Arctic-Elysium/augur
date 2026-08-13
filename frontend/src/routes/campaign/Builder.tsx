@@ -84,8 +84,8 @@ export function Builder({
     }
   };
 
-  const endurance = attributes["endurance"] ?? rules.base;
-  const projectedHp = 10 + Math.floor((endurance - 10) / 2) * 2;
+  const constitution = attributes["constitution"] ?? rules.base;
+  const projectedHp = 10 + Math.floor((constitution - 10) / 2) * 2;
 
   return (
     <div className="builder">
@@ -149,7 +149,7 @@ export function Builder({
 
         <p className="field__hint">
           The modifier is what gets added to a roll — the score itself never
-          appears on the table. Endurance sets health: {projectedHp} to start.
+          appears on the table. Constitution sets health: {projectedHp} to start.
         </p>
       </section>
 
@@ -282,10 +282,10 @@ export function Builder({
       {error && <p className="notice notice--bad">{error}</p>}
 
       <div className="actions actions--sticky">
-        <button className="button" onClick={() => void submit()} disabled={!ready || busy}>
+        <button className="btn btn--go" onClick={() => void submit()} disabled={!ready || busy}>
           {busy ? "Creating" : "Create character"}
         </button>
-        <button className="button button--quiet" onClick={onCancel}>
+        <button className="btn" onClick={onCancel}>
           Cancel
         </button>
         {!ready && name.trim() !== "" && (

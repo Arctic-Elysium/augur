@@ -41,8 +41,8 @@ def make_character(**overrides) -> Character:
         "id": "pc-1",
         "name": "Test Subject",
         "attributes": {
-            "might": 12, "agility": 14, "endurance": 12,
-            "wits": 10, "insight": 14, "presence": 10,
+            "strength": 12, "dexterity": 14, "constitution": 12,
+            "intelligence": 10, "wisdom": 14, "charisma": 10,
         },
         "skills": {"search": 2},
         "hp": 12,
@@ -251,7 +251,7 @@ def test_conditions_modify_checks():
 def test_condition_only_affects_listed_attributes():
     ruleset = D20Ruleset()
     frightened = make_character(conditions=(ActiveCondition("frightened"),))
-    # frightened hits presence and wits, not insight
+    # frightened hits charisma and intelligence, not wisdom
     assert ruleset.total_modifier(frightened, "search") == ruleset.total_modifier(
         make_character(), "search"
     )
@@ -455,25 +455,25 @@ def test_check_without_target_ref_does_not_lock():
 
 def test_attribute_modifier_curve():
     actor = make_character(
-        attributes={"might": 3, "agility": 10, "endurance": 14, "wits": 18,
-                    "insight": 11, "presence": 8}
+        attributes={"strength": 3, "dexterity": 10, "constitution": 14, "intelligence": 18,
+                    "wisdom": 11, "charisma": 8}
     )
-    assert actor.attribute_mod("might") == -4
-    assert actor.attribute_mod("agility") == 0
-    assert actor.attribute_mod("endurance") == 2
-    assert actor.attribute_mod("wits") == 4
-    assert actor.attribute_mod("presence") == -1
+    assert actor.attribute_mod("strength") == -4
+    assert actor.attribute_mod("dexterity") == 0
+    assert actor.attribute_mod("constitution") == 2
+    assert actor.attribute_mod("intelligence") == 4
+    assert actor.attribute_mod("charisma") == -1
 
 
 def test_create_character_validates_attributes():
     ruleset = D20Ruleset()
     with pytest.raises(InvalidRequest):
-        ruleset.create_character({"id": "x", "name": "X", "attributes": {"might": 12}})
+        ruleset.create_character({"id": "x", "name": "X", "attributes": {"strength": 12}})
     with pytest.raises(InvalidRequest):
         ruleset.create_character({
             "id": "x", "name": "X",
             "attributes": {a: 99 for a in
-                           ("might", "agility", "endurance", "wits", "insight", "presence")},
+                           ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")},
         })
 
 
@@ -481,11 +481,45 @@ def test_create_character_derives_hp_from_endurance():
     ruleset = D20Ruleset()
     tough = ruleset.create_character({
         "id": "x", "name": "X",
-        "attributes": {"might": 10, "agility": 10, "endurance": 16,
-                       "wits": 10, "insight": 10, "presence": 10},
+        "attributes": {"strength": 8, "dexterity": 8, "constitution": 15,
+                       "intelligence": 10, "wisdom": 10, "charisma": 8},
     })
-    assert tough.hp_max == 16
+    assert tough.hp_max == 14
     assert tough.hp == tough.hp_max
+
+
+def test_point_buy_is_enforced_at_creation():
+    """A client is not a validator - nothing stops a crafted request."""
+    ruleset = D20Ruleset()
+    with pytest.raises(InvalidRequest, match="over budget"):
+        ruleset.create_character({
+            "id": "x", "name": "X",
+            "attributes": dict.fromkeys(
+                ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"), 15
+            ),
+        })
+
+
+def test_skill_points_are_enforced():
+    ruleset = D20Ruleset()
+    with pytest.raises(InvalidRequest, match="skill points"):
+        ruleset.create_character({
+            "id": "x", "name": "X",
+            "attributes": {"strength": 10, "dexterity": 10, "constitution": 10,
+                           "intelligence": 10, "wisdom": 10, "charisma": 10},
+            "skills": {"search": 3, "sneak": 3, "perceive": 3},
+        })
+
+
+def test_build_can_be_bypassed_for_generated_characters():
+    """NPCs and imported statblocks do not go through point buy."""
+    ruleset = D20Ruleset()
+    npc = ruleset.create_character({
+        "id": "npc", "name": "Ogre", "enforce_build": False,
+        "attributes": {"strength": 18, "dexterity": 8, "constitution": 17,
+                       "intelligence": 6, "wisdom": 8, "charisma": 12},
+    })
+    assert npc.attribute_mod("strength") == 4
 
 
 def test_describe_for_model_includes_state():
@@ -528,3 +562,38 @@ def test_every_check_kind_uses_a_real_attribute():
 
     for kind in D20Ruleset().check_kinds():
         assert kind.attribute in ATTRIBUTES
+
+
+def test_no_condition_targets_an_attribute_that_does_not_exist():
+    """A typo here fails silently - the condition simply never applies, and a
+    blinded character quietly keeps their full perception."""
+    from app.modules.rules.systems.d20.ruleset import ATTRIBUTES, CONDITIONS
+
+    for spec in CONDITIONS:
+        for attribute in spec.affects_attributes:
+            assert attribute in ATTRIBUTES, (
+                f"condition '{spec.id}' targets unknown attribute '{attribute}'"
+            )
+
+
+def test_no_condition_blocks_an_action_that_does_not_exist():
+    from app.modules.rules.systems.d20.ruleset import CHECK_KINDS, CONDITIONS
+
+    known = {k.id for k in CHECK_KINDS}
+    for spec in CONDITIONS:
+        for action in spec.blocks_actions:
+            assert action in known, (
+                f"condition '{spec.id}' blocks unknown action '{action}'"
+            )
+
+
+def test_legacy_attribute_names_are_migrated_on_load():
+    """Sheets written before the rename still load."""
+    ruleset = D20Ruleset()
+    old = ruleset.create_character({
+        "id": "x", "name": "X",
+        "attributes": {"might": 12, "agility": 13, "endurance": 12,
+                       "wits": 11, "insight": 12, "presence": 10},
+    })
+    assert old.attributes["strength"] == 12
+    assert old.attribute_mod("constitution") == 1

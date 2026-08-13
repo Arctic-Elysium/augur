@@ -33,7 +33,15 @@ async def lifespan(app: FastAPI):
 
     # AI gateway. Routing config is validated here, so a bad route fails the
     # pod's readiness probe rather than a player's turn.
+    # Three tiers. Extraction and summarisation are structured, mechanical
+    # tasks with no prose quality bar, so they run on the cheap model - they
+    # fire on every single turn, which makes them the largest avoidable cost
+    # in a long session.
     backends = {
+        "claude_fast": AnthropicBackend(
+            settings.anthropic_api_key, "claude-haiku-4-5-20251001",
+            settings.ai_request_timeout_seconds,
+        ),
         "claude": AnthropicBackend(
             settings.anthropic_api_key, "claude-sonnet-4-6",
             settings.ai_request_timeout_seconds,

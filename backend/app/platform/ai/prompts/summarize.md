@@ -1,15 +1,18 @@
-<!-- version: 1.0.0 -->
-Compress the material below into a summary at level {level}, where 0 is a
-single scene, 1 is a whole session, and 2 is a chapter spanning sessions.
+<!-- version: 2.0.0 -->
+Summarise the session below for a game master who will run the next one.
 
-Keep: decisions the player made, consequences that landed, unresolved threads,
-changes in who wants what, anything a later scene would need to reference.
+Write one or two short paragraphs of plain prose. Cover, in this order:
 
-Drop: description, dialogue that went nowhere, mechanical detail, anything
-already captured as a durable fact elsewhere.
+- where the party ended up and in what condition
+- what they accomplished or failed at
+- who they met and how it was left
+- what is unresolved, owed, or coming for them
 
-Write plain prose in past tense. Target {target_words} words. Do not editorialise
-and do not invent anything that is not in the material.
+Name people and places explicitly. A summary that says "they spoke to someone
+about the shipment" is useless three sessions later; "they pressed Serel about
+the shipment and she stonewalled them" is what the next session needs.
 
-Material:
-{material}
+Leave out atmosphere, combat blow-by-blow, and anything that does not bear on
+what happens next. This is a handover note, not a recap.
+
+Prose only. No headings, no lists, no preamble.

@@ -123,10 +123,10 @@ function SheetView({ character, onChanged }: { character: Character; onChanged: 
                       onChange={(e) => setBackstory(e.target.value)}
                     />
                     <div className="actions">
-                      <button className="button" onClick={() => void save()}>
+                      <button className="btn btn--go" onClick={() => void save()}>
                         Save
                       </button>
-                      <button className="button button--quiet" onClick={() => setEditing(false)}>
+                      <button className="btn" onClick={() => setEditing(false)}>
                         Cancel
                       </button>
                     </div>
@@ -136,7 +136,7 @@ function SheetView({ character, onChanged }: { character: Character; onChanged: 
                     <p className="prose">
                       {character.backstory || "Nothing written yet."}
                     </p>
-                    <button className="button button--quiet" onClick={() => setEditing(true)}>
+                    <button className="btn" onClick={() => setEditing(true)}>
                       Edit
                     </button>
                   </>
@@ -153,45 +153,58 @@ export function PartyTab() {
   const [building, setBuilding] = useState(false);
   const roster = characters.filter((c) => c.active);
 
+  // Both branches need their own scroll container: the shell is
+  // height:100dvh with overflow:hidden, so anything taller than the viewport
+  // is unreachable without one. The builder is always taller.
   if (building) {
     return (
-              <Builder
-                campaignId={campaign.id}
-                onDone={() => {
-                  setBuilding(false);
-                  void reload();
-                }}
-                onCancel={() => setBuilding(false)}
-              />
-            );
-          }
+      <div className="pane">
+        <div className="pane__inner">
+          <Builder
+            campaignId={campaign.id}
+            onDone={() => {
+              setBuilding(false);
+              void reload();
+            }}
+            onCancel={() => setBuilding(false)}
+          />
+        </div>
+      </div>
+    );
+  }
 
-          return (
-            <div className="stack">
-              <div className="section__head">
-                <h2 className="section__title">
-                  {roster.length} {roster.length === 1 ? "character" : "characters"}
-                </h2>
-                <button className="button" onClick={() => setBuilding(true)}>
-                  Build a character
-                </button>
-              </div>
+  return (
+    <div className="pane">
+      <div className="pane__inner">
+        <header className="pane__head">
+          <div>
+            <h1 className="pane__title">Party</h1>
+            <span className="pane__sub">
+              {roster.length} {roster.length === 1 ? "character" : "characters"}
+            </span>
+          </div>
+          <button className="btn btn--go" onClick={() => setBuilding(true)}>
+            Build a character
+          </button>
+        </header>
 
-              {roster.length === 0 ? (
-                <div className="empty">
-                  <h2>Nobody here yet</h2>
-                  <p>
-                    Build someone. In solo mode you can run several at once — each takes
-                    their own turns and gets their own attempt at the same locked door.
-                  </p>
-                </div>
-              ) : (
-                <div className="sheets">
-                  {roster.map((c) => (
-                    <SheetView key={c.id} character={c} onChanged={() => void reload()} />
-                  ))}
-                </div>
-              )}
-            </div>
+        {roster.length === 0 ? (
+          <div className="empty">
+            <h2>Nobody here yet</h2>
+            <p>
+              Build someone. In solo mode you can run several at once — each
+              takes their own turns and gets their own attempt at the same
+              locked door.
+            </p>
+          </div>
+        ) : (
+          <div className="sheets">
+            {roster.map((c) => (
+              <SheetView key={c.id} character={c} onChanged={() => void reload()} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

@@ -77,7 +77,7 @@ export function JournalTab() {
                   onChange={(e) => setDraft({ ...draft, body: e.target.value })}
                 />
                 <div className="actions">
-                  <button className="button" onClick={() => void create()}>
+                  <button className="btn btn--go" onClick={() => void create()}>
                     Add note
                   </button>
                   <span className="field__hint">
@@ -157,10 +157,10 @@ function EditNote({
                     onChange={(e) => setBody(e.target.value)}
                   />
                   <div className="actions">
-                    <button className="button" onClick={() => void onSave(note, title, body)}>
+                    <button className="btn btn--go" onClick={() => void onSave(note, title, body)}>
                       Save
                     </button>
-                    <button className="button button--quiet" onClick={onCancel}>
+                    <button className="btn" onClick={onCancel}>
                       Cancel
                     </button>
                   </div>

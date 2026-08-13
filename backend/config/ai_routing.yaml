@@ -1,10 +1,19 @@
 # Capability -> backend routing.
 #
+# Tiering matters more than it looks. resolve_turn and narrate_scene produce
+# the prose the player reads, so they stay on the strong model. Everything
+# else - extraction, summarisation - is mechanical and runs on the cheap one.
+# Combined with prompt caching on the tools-plus-system prefix, that is most
+# of the achievable saving without touching game quality.
+#
 # Swapping Golem in later is an edit to this file: add the backend, then shift
 # weight on one capability at a time and compare. Validation runs at startup, so
 # a backend that can't satisfy a capability's requirements fails fast.
 
 backends:
+  claude_fast:
+    kind: anthropic
+    model: claude-haiku-4-5-20251001
   claude:
     kind: anthropic
     model: claude-sonnet-4-6
@@ -35,12 +44,17 @@ capabilities:
   resolve_turn:
     - backend: claude
       model: claude-sonnet-4-6
+  # Structured extraction with no prose bar, running on every turn. The single
+  # largest avoidable cost in a long session.
   extract_entities:
-    - backend: claude
-      model: claude-sonnet-4-6
+    - backend: claude_fast
+      model: claude-haiku-4-5-20251001
+      fallback: claude
+  # Compression, not composition.
   summarize:
-    - backend: claude
-      model: claude-sonnet-4-6
+    - backend: claude_fast
+      model: claude-haiku-4-5-20251001
+      fallback: claude
   gm_suggest:
     - backend: claude
       model: claude-sonnet-4-6

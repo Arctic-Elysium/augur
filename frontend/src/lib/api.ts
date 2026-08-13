@@ -18,8 +18,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (response.status === 401) {
-    window.location.href = "/api/auth/login";
-    throw new ApiError(401, "unauthenticated", "Redirecting to sign in");
+    // Deliberately NOT redirecting to /api/auth/login here.
+    //
+    // Signing out clears Augur's cookie but not the identity provider's, so an
+    // automatic redirect bounces straight back through a still-valid IdP
+    // session and signs you back in - which looks exactly like sign-out being
+    // broken. Surfacing the 401 lets the session provider show the signed-out
+    // screen, where signing in is a deliberate click.
+    throw new ApiError(401, "unauthenticated", "Not signed in");
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

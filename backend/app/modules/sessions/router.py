@@ -28,6 +28,7 @@ from app.modules.sessions.models import PlaySession, SessionStatus, Turn
 from app.modules.sessions.service import SessionService
 from app.modules.memory.extraction import Extractor
 from app.modules.memory.service import DatabaseContextSource, MemoryService
+from app.modules.memory.summarize import Summarizer
 from app.platform.ai.context import ContextBuilder
 
 router = APIRouter()
@@ -194,12 +195,28 @@ async def set_spotlight(
 
 @router.post("/{session_id}/end", response_model=SessionOut)
 async def end_session(
-    session_id: uuid.UUID, db: DbDep, principal: PrincipalDep
+    session_id: uuid.UUID, request: Request, db: DbDep, principal: PrincipalDep
 ) -> PlaySession:
+    """Seals the log and writes a summary.
+
+    The summary is what lets the next session load this one as a paragraph
+    instead of a transcript - it is the compression rung that keeps context
+    flat as a campaign gets long.
+    """
     service = SessionService(db)
     session = await service.get(session_id)
     await _authorize(db, principal, session.campaign_id)
-    return await service.end(session_id)
+
+    exchanges = await service.recent_exchanges(session.id, limit=400)
+    summary = await Summarizer(
+        request.app.state.ai, MemoryService(db, session.campaign_id)
+    ).summarize_session(
+        session_id=str(session.id),
+        session_number=session.number,
+        exchanges=exchanges,
+    )
+
+    return await service.end(session_id, summary=summary)
 
 
 @router.get("/{session_id}/turns")

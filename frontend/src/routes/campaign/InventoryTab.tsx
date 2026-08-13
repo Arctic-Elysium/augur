@@ -81,7 +81,7 @@ function Carried({
                     }
                   }}
                 />
-                <button className="button button--quiet" onClick={add} disabled={busy}>
+                <button className="btn" onClick={add} disabled={busy}>
                   Add
                 </button>
               </div>

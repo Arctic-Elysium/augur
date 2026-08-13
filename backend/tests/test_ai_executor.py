@@ -33,8 +33,8 @@ def character(actor_id="pc-1", **overrides) -> Character:
         "id": actor_id,
         "name": "Vessa",
         "attributes": {
-            "might": 11, "agility": 15, "endurance": 13,
-            "wits": 12, "insight": 16, "presence": 9,
+            "strength": 11, "dexterity": 15, "constitution": 13,
+            "intelligence": 12, "wisdom": 16, "charisma": 9,
         },
         "skills": {"search": 2},
         "hp": 12,
@@ -182,8 +182,8 @@ def test_repeated_check_reports_the_lock_to_the_model():
 
 def test_natural_20_cannot_rescue_an_impossible_check():
     """The roll gate, reached through the tool surface."""
-    weak = character(attributes={"might": 3, "agility": 3, "endurance": 3,
-                                 "wits": 3, "insight": 3, "presence": 3},
+    weak = character(attributes={"strength": 3, "dexterity": 3, "constitution": 3,
+                                 "intelligence": 3, "wisdom": 3, "charisma": 3},
                      skills={})
     outcome = executor(20).execute(
         "roll_check",

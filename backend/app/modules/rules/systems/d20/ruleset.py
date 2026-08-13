@@ -40,15 +40,38 @@ from app.modules.rules.types import (
     Tier,
 )
 
-ATTRIBUTES = ("might", "agility", "endurance", "wits", "insight", "presence")
+# The familiar six, deliberately.
+#
+# Invented names (might, wits, presence) cost the player a translation step at
+# every roll, and cost the model too: it has enormous exposure to the standard
+# names and none to mine, so the narration is better and the prompting shorter
+# when the sheet reads the way every other d20 sheet reads.
+ATTRIBUTES = (
+    "strength",
+    "dexterity",
+    "constitution",
+    "intelligence",
+    "wisdom",
+    "charisma",
+)
 
 ATTRIBUTE_BLURBS = {
-    "might": "Force, grip, and the weight you can put behind a thing.",
-    "agility": "Speed, balance, and hands that do what you tell them.",
-    "endurance": "What you can absorb and keep going through. Sets your health.",
-    "wits": "Recall, reasoning, and how fast you put things together.",
-    "insight": "What you notice, and what you read in people.",
-    "presence": "How much room you take up in a conversation.",
+    "strength": "Force, grip, and the weight you can put behind a thing.",
+    "dexterity": "Speed, balance, and hands that do what you tell them.",
+    "constitution": "What you absorb and keep going through. Sets your health.",
+    "intelligence": "Recall, reasoning, and how fast you put things together.",
+    "wisdom": "What you notice, and what you read in people.",
+    "charisma": "How much room you take up in a conversation.",
+}
+
+# Old name -> new, for sheets written before the rename.
+LEGACY_ATTRIBUTES = {
+    "might": "strength",
+    "agility": "dexterity",
+    "endurance": "constitution",
+    "wits": "intelligence",
+    "insight": "wisdom",
+    "presence": "charisma",
 }
 
 # Point buy. Costs rise at the top so a character cannot be three maxima and
@@ -74,22 +97,22 @@ AUTO_PASS_SPREAD = -10
 
 CHECK_KINDS: tuple[CheckKind, ...] = (
     # Static targets lock - you do not get to search the same desk twice.
-    CheckKind("search", "Search", "insight", LockPolicy.PER_CONDITION_CHANGE),
-    CheckKind("recall", "Recall Lore", "wits", LockPolicy.ONCE),
-    CheckKind("pick_lock", "Pick Lock", "agility", LockPolicy.PER_CONDITION_CHANGE),
-    CheckKind("disarm_trap", "Disarm Trap", "agility", LockPolicy.PER_CONDITION_CHANGE),
-    CheckKind("persuade", "Persuade", "presence", LockPolicy.PER_SCENE),
-    CheckKind("deceive", "Deceive", "presence", LockPolicy.PER_SCENE),
-    CheckKind("intimidate", "Intimidate", "presence", LockPolicy.PER_SCENE),
-    CheckKind("decipher", "Decipher", "wits", LockPolicy.ONCE),
+    CheckKind("search", "Search", "wisdom", LockPolicy.PER_CONDITION_CHANGE),
+    CheckKind("recall", "Recall Lore", "intelligence", LockPolicy.ONCE),
+    CheckKind("pick_lock", "Pick Lock", "dexterity", LockPolicy.PER_CONDITION_CHANGE),
+    CheckKind("disarm_trap", "Disarm Trap", "dexterity", LockPolicy.PER_CONDITION_CHANGE),
+    CheckKind("persuade", "Persuade", "charisma", LockPolicy.PER_SCENE),
+    CheckKind("deceive", "Deceive", "charisma", LockPolicy.PER_SCENE),
+    CheckKind("intimidate", "Intimidate", "charisma", LockPolicy.PER_SCENE),
+    CheckKind("decipher", "Decipher", "intelligence", LockPolicy.ONCE),
     # Active or repeatable - you can always swing again.
-    CheckKind("strike", "Strike", "might", LockPolicy.NEVER),
-    CheckKind("shoot", "Shoot", "agility", LockPolicy.NEVER),
-    CheckKind("dodge", "Dodge", "agility", LockPolicy.NEVER),
-    CheckKind("endure", "Endure", "endurance", LockPolicy.NEVER),
-    CheckKind("sneak", "Sneak", "agility", LockPolicy.NEVER),
-    CheckKind("climb", "Climb", "might", LockPolicy.NEVER, time_sensitive=True),
-    CheckKind("perceive", "Perceive", "insight", LockPolicy.PER_SCENE),
+    CheckKind("strike", "Strike", "strength", LockPolicy.NEVER),
+    CheckKind("shoot", "Shoot", "dexterity", LockPolicy.NEVER),
+    CheckKind("dodge", "Dodge", "dexterity", LockPolicy.NEVER),
+    CheckKind("endure", "Endure", "constitution", LockPolicy.NEVER),
+    CheckKind("sneak", "Sneak", "dexterity", LockPolicy.NEVER),
+    CheckKind("climb", "Climb", "strength", LockPolicy.NEVER, time_sensitive=True),
+    CheckKind("perceive", "Perceive", "wisdom", LockPolicy.PER_SCENE),
 )
 
 _KINDS_BY_ID = {k.id: k for k in CHECK_KINDS}
@@ -100,20 +123,20 @@ CONDITIONS: tuple[ConditionSpec, ...] = (
     ConditionSpec("poisoned", "Poisoned", check_modifier=-2, damage_per_tick=1,
                   description="Sickened and weakened."),
     ConditionSpec("frightened", "Frightened", check_modifier=-2,
-                  affects_attributes=("presence", "wits"),
+                  affects_attributes=("charisma", "intelligence"),
                   description="Fear clouds judgement and nerve."),
     ConditionSpec("prone", "Prone", check_modifier=-2,
-                  affects_attributes=("might", "agility"),
+                  affects_attributes=("strength", "dexterity"),
                   blocks_actions=("climb",),
                   description="On the ground."),
     ConditionSpec("restrained", "Restrained", check_modifier=-4,
-                  affects_attributes=("might", "agility"),
+                  affects_attributes=("strength", "dexterity"),
                   blocks_actions=("sneak", "climb", "dodge"),
                   description="Bound or held fast."),
     ConditionSpec("exhausted", "Exhausted", check_modifier=-2,
                   description="Running on empty."),
     ConditionSpec("blinded", "Blinded", check_modifier=-4,
-                  affects_attributes=("insight", "agility"),
+                  affects_attributes=("wisdom", "dexterity"),
                   blocks_actions=("shoot", "search"),
                   description="Cannot see."),
     ConditionSpec("inspired", "Inspired", check_modifier=2,
@@ -217,13 +240,16 @@ class D20Ruleset:
             "skill_points": SKILL_POINTS,
             "skill_max": SKILL_MAX,
             "derived": {
-                "hp_max": "10 + (endurance modifier x 2)",
+                "hp_max": "10 + (constitution modifier x 2)",
                 "stress_max": "6",
             },
         }
 
     def create_character(self, spec: dict[str, Any]) -> Character:
-        attributes = spec.get("attributes") or {}
+        attributes = {
+            LEGACY_ATTRIBUTES.get(k, k): v
+            for k, v in (spec.get("attributes") or {}).items()
+        }
         missing = [a for a in ATTRIBUTES if a not in attributes]
         if missing:
             raise InvalidRequest(f"missing attributes: {', '.join(missing)}")
@@ -251,7 +277,7 @@ class D20Ruleset:
                     f"point buy over budget: {spent} spent of {POINT_BUDGET}"
                 )
 
-        endurance_mod = (attributes["endurance"] - 10) // 2
+        endurance_mod = (attributes["constitution"] - 10) // 2
         hp_max = spec.get("hp_max") or max(1, 10 + endurance_mod * 2)
 
         skills = spec.get("skills") or {}

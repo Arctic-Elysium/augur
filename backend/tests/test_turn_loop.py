@@ -32,8 +32,8 @@ def pc(character_id: str, name: str, **overrides):
     spec = {
         "id": character_id,
         "name": name,
-        "attributes": {"might": 12, "agility": 13, "endurance": 12,
-                       "wits": 12, "insight": 14, "presence": 11},
+        "attributes": {"strength": 12, "dexterity": 13, "constitution": 12,
+                       "intelligence": 12, "wisdom": 14, "charisma": 11},
         "skills": {"search": 1},
     }
     spec.update(overrides)
@@ -272,3 +272,62 @@ async def test_clock_changes_survive_the_turn():
         clocks={"watch": Clock("watch", "The Watch closes in", size=6, filled=1)}
     ))
     assert outcome.clocks["watch"].filled == 2
+
+
+async def test_tool_result_content_is_a_string():
+    """The API rejects a bare object here.
+
+    `tool_result.content` must be a string or a list of content blocks. Passing
+    the result dict straight through returns a 400 that names a message index,
+    which is a long way from the line that caused it.
+    """
+    import json
+
+    raw = [
+        {"type": "text", "text": "Checking."},
+        {"type": "tool_use", "id": "t-1", "name": "query_character",
+         "input": {"actor_id": "pc-1"}},
+    ]
+    backend = FakeBackend("fake", responses=[
+        CompletionResult(
+            text="", tool_calls=[call("query_character", actor_id="pc-1")],
+            usage=Usage(10, 5), backend="fake", model="f", raw_content=raw,
+        ),
+        result("You look yourself over."),
+    ])
+    router = AIRouter(
+        {"fake": backend},
+        {c: [Route("fake", "m")] for c in Capability},
+        TokenLedger(10_000_000),
+    )
+    loop = TurnLoop(router, RulesEngine(ledger=CheckLedger(), rng=Scripted()))
+    await loop.run(turn_input())
+
+    blocks = backend.calls[1].messages[-1].content
+    tool_results = [b for b in blocks if b["type"] == "tool_result"]
+    assert tool_results, "no tool_result block was sent back"
+    for block in tool_results:
+        assert isinstance(block["content"], str), "content must be a string"
+        json.loads(block["content"])
+
+
+async def test_rejected_tool_result_is_flagged_as_an_error():
+    """So the model treats it as something to correct, not something that
+    happened."""
+    backend = FakeBackend("fake", responses=[
+        CompletionResult(
+            text="", tool_calls=[call("apply_damage", actor_id="ghost", amount=3)],
+            usage=Usage(10, 5), backend="fake", model="f", raw_content="x",
+        ),
+        result("Nothing happens."),
+    ])
+    router = AIRouter(
+        {"fake": backend},
+        {c: [Route("fake", "m")] for c in Capability},
+        TokenLedger(10_000_000),
+    )
+    loop = TurnLoop(router, RulesEngine(ledger=CheckLedger(), rng=Scripted()))
+    await loop.run(turn_input())
+
+    blocks = backend.calls[1].messages[-1].content
+    assert blocks[0]["is_error"] is True

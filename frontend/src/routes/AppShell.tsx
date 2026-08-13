@@ -1,6 +1,5 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
-import { api } from "../lib/api";
-import { useSession } from "../lib/session";
+import { useSession, useSignOut } from "../lib/session";
 
 /** Persistent chrome. Rendered once, above every route, so nothing here ever
  *  unmounts or scrolls away. Route children own their own scroll containers -
@@ -8,6 +7,7 @@ import { useSession } from "../lib/session";
  *  position: sticky. */
 export function AppShell() {
   const session = useSession();
+  const signOut = useSignOut();
 
   if (session.status === "loading") {
     return <div className="shell shell--centered">Loading</div>;
@@ -40,10 +40,7 @@ export function AppShell() {
           <span className="globalnav__who">
             {session.me.displayName ?? session.me.email ?? "signed in"}
           </span>
-          <button
-            className="btn"
-            onClick={() => void api.logout().then(() => location.reload())}
-          >
+          <button className="btn" onClick={() => void signOut()}>
             Sign out
           </button>
         </div>
