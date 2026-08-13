@@ -18,6 +18,7 @@ from app.core.errors import NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.characters.models import Character, Controller
 from app.modules.identity.service import IdentityService
+from app.modules.memory.service import MemoryService
 from app.modules.rules import registry
 
 router = APIRouter()
@@ -122,6 +123,12 @@ async def create_character(
     )
     db.add(row)
     await db.flush()
+
+    # Threads become canon immediately. Without this the hooks are inert - a
+    # player writes "I owe Karal for the boat" and the GM never sees it again.
+    await MemoryService(db, campaign.id).seed_from_character(
+        payload.name, payload.backstory, [h.model_dump() for h in payload.hooks]
+    )
     return row
 
 

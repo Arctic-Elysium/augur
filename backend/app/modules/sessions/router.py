@@ -25,7 +25,9 @@ from app.modules.identity.service import IdentityService
 from app.modules.narrative.turn_loop import TurnInput, TurnLoop
 from app.modules.sessions.models import PlaySession, Turn
 from app.modules.sessions.service import SessionService
-from app.platform.ai.context import ContextBuilder, ContextPacket, Exchange
+from app.modules.memory.extraction import Extractor
+from app.modules.memory.service import DatabaseContextSource, MemoryService
+from app.platform.ai.context import ContextBuilder
 
 router = APIRouter()
 
@@ -80,6 +82,7 @@ async def start_session(
         campaign.id, ruleset_id=campaign.ruleset_id
     )
 
+
 @router.get("", response_model=list[SessionOut])
 async def list_sessions(
     campaign_id: uuid.UUID, db: DbDep, principal: PrincipalDep
@@ -96,6 +99,7 @@ async def list_sessions(
         .order_by(PlaySession.number.desc())
     )
     return list(result.scalars())
+
 
 @router.get("/{session_id}", response_model=SessionOut)
 async def get_session(
@@ -174,10 +178,17 @@ async def take_turn(
     clocks = await service.clocks(campaign.id)
     engine = await service.engine_for(session, campaign.ruleset_id)
 
-    context = ContextPacket(
+    # Real memory. Retrieval is ranked and the builder caps each layer, so
+    # this costs about the same at session 40 as at session 4.
+    memory = MemoryService(db, campaign.id)
+    source = DatabaseContextSource(
+        memory,
+        in_play_refs=[],
         previous=await service.previous_session_exchanges(campaign.id, session.number),
         recent=await service.recent_exchanges(session.id),
     )
+    await source.preload()
+    context = ContextBuilder().build(source, str(session.id), session.scene_id)
 
     turn_input = TurnInput(
         session_id=str(session.id),
@@ -229,10 +240,17 @@ async def take_turn(
             },
         })
 
+        # Extraction runs after the player has their narration. If it fails,
+        # the turn still stands - losing one turn's memory is far cheaper than
+        # losing the turn, and named things recur.
+        extraction = await Extractor(request.app.state.ai).extract(
+            narration, session_id=str(session.id)
+        )
+
         await service.save_party(outcome.party_after)
         await service.save_clocks(campaign.id, outcome.clocks)
         await service.persist_locks(campaign.id, engine.ledger)
-        await service.record_turn(
+        turn = await service.record_turn(
             session,
             actor_id=actor_id,
             player_input=payload.text,
@@ -244,7 +262,28 @@ async def take_turn(
             ],
             prompt_version=outcome.prompt_version,
         )
+
+        for entity in extraction.entities:
+            await memory.upsert_entity(
+                kind=entity.kind, name=entity.name, summary=entity.summary,
+                session_number=session.number,
+            )
+        for fact in extraction.facts:
+            await memory.add_fact(
+                subject_ref=await memory.resolve_target(fact.subject),
+                predicate=fact.predicate,
+                object_text=fact.object,
+                session_number=session.number,
+                turn_id=turn.id,
+            )
+
         await db.commit()
+        yield _sse("learned", {
+            "entities": [
+                {"kind": e.kind, "name": e.name} for e in extraction.entities
+            ],
+            "facts": len(extraction.facts),
+        })
         yield _sse("done", {"rejected": outcome.rejected})
 
     return StreamingResponse(

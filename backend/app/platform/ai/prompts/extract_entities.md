@@ -1,18 +1,32 @@
-<!-- version: 1.0.0 -->
-Extract durable facts and entities from the passage below.
+<!-- version: 2.0.0 -->
+Extract durable entities and facts from the passage below.
+
+An **entity** is a person, place, faction, item, or creature that was *named*,
+or that the player will plausibly refer to again. Give it a `kind` of one of:
+npc, location, faction, item, creature, concept.
 
 A **fact** is something the world must not later contradict: a name, a
-relationship, a location, an event that happened, a property of a thing. Break
-each into subject, predicate, object. Prefer specific over general.
+relationship, a property, something that happened. Break each into subject,
+predicate, object. The subject should be an entity name you also extracted.
 
-An **entity** is a person, place, item, or faction that was named or that the
-player may plausibly refer to again. Give each a stable id in the form
-`kind:slug` - `npc:the-duke`, `loc:study`, `item:brass-key`, `faction:watch`.
+Be conservative. A wrong entity is worse than a missing one - it pollutes
+retrieval and shows up in the player's codex looking like a mistake. Anything
+genuinely important will be mentioned again, and caught then.
 
-Do not extract atmosphere, adjectives, or anything the narration merely
-implied. If it was not stated, it is not a fact.
+Do not extract:
+- atmosphere, weather, lighting, or mood
+- adjectives and descriptions with no named subject
+- anything the passage merely implied rather than stated
+- the player characters themselves; they are already tracked
 
-Respond with JSON only. No preamble, no code fences.
+Return JSON matching this shape exactly. No preamble, no code fences.
+
+{{
+  "entities": [{{"kind": "npc", "name": "Serel", "summary": "The innkeeper at the Blackstair."}}],
+  "facts": [{{"subject": "Serel", "predicate": "works at", "object": "the Blackstair inn"}}]
+}}
+
+If nothing durable was established, return empty arrays.
 
 Passage:
 {passage}
