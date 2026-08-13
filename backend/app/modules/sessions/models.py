@@ -49,6 +49,9 @@ class PlaySession(UUIDPrimaryKey, Timestamped, Base):
     active_character_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("characters.id", ondelete="SET NULL"), nullable=True
     )
+    # Player-given name. Sessions are otherwise only distinguishable by number,
+    # which is useless for finding the one where the bridge collapsed.
+    title: Mapped[str | None] = mapped_column(String(200), nullable=True)
     # Written at session end; becomes a rung on the summary ladder.
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(

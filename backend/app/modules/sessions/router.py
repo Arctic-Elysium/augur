@@ -11,19 +11,20 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.auth.deps import DbDep, PrincipalDep
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.characters.models import Character as CharacterRow
 from app.modules.identity.service import IdentityService
 from app.modules.narrative.turn_loop import TurnInput, TurnLoop
-from app.modules.sessions.models import PlaySession, Turn
+from app.modules.sessions.models import PlaySession, SessionStatus, Turn
 from app.modules.sessions.service import SessionService
 from app.modules.memory.extraction import Extractor
 from app.modules.memory.service import DatabaseContextSource, MemoryService
@@ -39,8 +40,18 @@ class SessionOut(BaseModel):
     status: str
     scene_id: str
     active_character_id: uuid.UUID | None
+    title: str | None = None
+    summary: str | None = None
+    created_at: datetime | None = None
+    ended_at: datetime | None = None
+    turn_count: int = 0
 
     model_config = {"from_attributes": True}
+
+
+class SessionUpdate(BaseModel):
+    title: str | None = Field(default=None, max_length=200)
+    summary: str | None = Field(default=None, max_length=4000)
 
 
 class StartSession(BaseModel):
@@ -86,11 +97,11 @@ async def start_session(
 @router.get("", response_model=list[SessionOut])
 async def list_sessions(
     campaign_id: uuid.UUID, db: DbDep, principal: PrincipalDep
-) -> list[PlaySession]:
-    """Sessions for a campaign, newest first.
+) -> list[SessionOut]:
+    """Sessions for a campaign, newest first, with turn counts.
 
-    The client needs this to answer "is there a session to resume?" without
-    already knowing its id - otherwise resuming requires bookmarking a UUID.
+    Counted in one grouped query rather than per row - a campaign with forty
+    sessions should not cost forty round trips to render a list.
     """
     await _authorize(db, principal, campaign_id)
     result = await db.execute(
@@ -98,7 +109,66 @@ async def list_sessions(
         .where(PlaySession.campaign_id == campaign_id)
         .order_by(PlaySession.number.desc())
     )
-    return list(result.scalars())
+    sessions = list(result.scalars())
+
+    counts = dict(
+        (
+            await db.execute(
+                select(Turn.session_id, func.count(Turn.id))
+                .where(Turn.session_id.in_([s.id for s in sessions] or [None]))
+                .group_by(Turn.session_id)
+            )
+        ).all()
+    )
+
+    return [
+        SessionOut(
+            id=s.id, campaign_id=s.campaign_id, number=s.number,
+            status=s.status.value if hasattr(s.status, "value") else str(s.status),
+            scene_id=s.scene_id, active_character_id=s.active_character_id,
+            title=s.title, summary=s.summary,
+            created_at=s.created_at, ended_at=s.ended_at,
+            turn_count=counts.get(s.id, 0),
+        )
+        for s in sessions
+    ]
+
+
+@router.patch("/{session_id}", response_model=SessionOut)
+async def rename_session(
+    session_id: uuid.UUID, payload: SessionUpdate, db: DbDep, principal: PrincipalDep
+) -> PlaySession:
+    service = SessionService(db)
+    session = await service.get(session_id)
+    await _authorize(db, principal, session.campaign_id)
+    if payload.title is not None:
+        session.title = payload.title
+    if payload.summary is not None:
+        session.summary = payload.summary
+    await db.flush()
+    return session
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    session_id: uuid.UUID, db: DbDep, principal: PrincipalDep
+) -> None:
+    """Removes a session and its turns.
+
+    Refuses while the session is live: deleting the thing you are currently
+    playing is never what was meant, and end-then-delete is one extra click.
+    Journal notes survive - they belong to the player, not the session, and
+    losing your own writing to a cleanup action would be indefensible.
+    """
+    service = SessionService(db)
+    session = await service.get(session_id)
+    await _authorize(db, principal, session.campaign_id)
+    if session.status == SessionStatus.ACTIVE:
+        raise ConflictError(
+            "end the session before deleting it",
+            detail={"hint": "an active session is the one you are playing"},
+        )
+    await db.delete(session)
 
 
 @router.get("/{session_id}", response_model=SessionOut)
