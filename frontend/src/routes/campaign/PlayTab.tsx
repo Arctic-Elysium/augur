@@ -8,6 +8,11 @@ import { DiceReadout } from "./DiceReadout";
 import { PartyRail } from "./PartyRail";
 import type { WorkspaceContext } from "./Workspace";
 
+/** One turn of narration is a few paragraphs. Anything past this is a loop,
+ *  and mounting hundreds of rows makes the page unusable before anyone can
+ *  stop it. The server caps this too - this is the last line. */
+const MAX_NARRATION_PARAGRAPHS = 12;
+
 export function PlayTab() {
   const { campaign, characters, sessions, activeSession, reload } =
     useOutletContext<WorkspaceContext>();
@@ -34,6 +39,7 @@ export function PlayTab() {
 
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const narrationCount = useRef(0);
 
   const {
     visible, startIndex, padTop, padBottom,
@@ -109,6 +115,7 @@ export function PlayTab() {
     if (!text || busy || !session) return;
     setInput("");
     setBusy(true);
+    narrationCount.current = 0;
     append({
       id: `live-${Date.now()}`,
       kind: "action",
@@ -128,7 +135,14 @@ export function PlayTab() {
           .forEach((e) => append(e));
         if (!atBottom) setUnread((n) => n + 1);
       },
-      onNarration: (t) => append({ id: `live-n-${Date.now()}`, kind: "narration", text: t }),
+      onNarration: (t) => {
+        // Client-side ceiling. The server cleans this, but a stream that
+        // arrives as hundreds of paragraph events would otherwise mount
+        // hundreds of rows before anyone could stop it.
+        narrationCount.current += 1;
+        if (narrationCount.current > MAX_NARRATION_PARAGRAPHS) return;
+        append({ id: `live-n-${Date.now()}-${narrationCount.current}`, kind: "narration", text: t });
+      },
       onState: (s) => {
         setParty(s.party);
         setClocks(s.clocks);

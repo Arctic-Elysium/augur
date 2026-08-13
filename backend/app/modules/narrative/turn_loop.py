@@ -16,6 +16,7 @@ concern rather than a rewrite of game logic.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -47,25 +48,64 @@ MAX_NARRATION_TOKENS = 900
 REPEAT_LIMIT = 2
 
 
-def _strip_repetition(text: str) -> str:
-    """Drop repeated paragraphs, keeping first occurrences in order.
+# A hard ceiling that does not depend on the text having any structure at all.
+# Roughly three long paragraphs; a turn that needs more than this is not a turn.
+MAX_NARRATION_CHARS = 4000
 
-    Degenerate repetition is a known failure mode under long contexts, and it
-    is far more jarring in a game log than a slightly short scene - the player
-    reads the same beat five times and loses trust in the whole thing.
+
+def strip_repetition(text: str) -> str:
+    """Drop repeated paragraphs and sentences, keeping first occurrences.
+
+    Degenerate repetition is a known failure mode under long contexts, and it is
+    far more corrosive in a game log than a slightly short scene - the player
+    reads the same beat five times and stops trusting the whole thing.
+
+    Two passes, because a loop does not always break on paragraphs: a model can
+    repeat a sentence inside one unbroken block, which a paragraph-level check
+    would pass through untouched. Then a hard character cap, because neither
+    heuristic is guaranteed to fire on text with no structure.
     """
-    seen: dict[str, int] = {}
+    if not text:
+        return text
+
+    seen_para: dict[str, int] = {}
     kept: list[str] = []
     for para in text.split("\n\n"):
         key = " ".join(para.split()).lower()[:160]
         if not key:
             continue
-        seen[key] = seen.get(key, 0) + 1
-        if seen[key] <= 1:
-            kept.append(para.strip())
-        elif seen[key] >= REPEAT_LIMIT:
+        seen_para[key] = seen_para.get(key, 0) + 1
+        if seen_para[key] >= REPEAT_LIMIT:
             break
-    return "\n\n".join(kept)
+        kept.append(para.strip())
+
+    out = "\n\n".join(kept)
+
+    # Sentence pass: catches a loop that never emits a blank line.
+    seen_sent: dict[str, int] = {}
+    sentences: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", out):
+        key = " ".join(sentence.split()).lower()[:120]
+        if not key:
+            continue
+        seen_sent[key] = seen_sent.get(key, 0) + 1
+        if seen_sent[key] >= REPEAT_LIMIT:
+            break
+        sentences.append(sentence)
+    if len(sentences) < len(re.split(r"(?<=[.!?])\s+", out)):
+        out = " ".join(sentences)
+
+    # Last resort. Truncate on a paragraph boundary if there is one nearby.
+    if len(out) > MAX_NARRATION_CHARS:
+        cut = out[:MAX_NARRATION_CHARS]
+        boundary = cut.rfind("\n\n")
+        out = cut[:boundary] if boundary > MAX_NARRATION_CHARS // 2 else cut
+
+    return out.strip()
+
+
+# Kept for callers that imported the private name.
+_strip_repetition = strip_repetition
 
 
 @dataclass

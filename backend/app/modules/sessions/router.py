@@ -23,7 +23,7 @@ from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.characters.models import Character as CharacterRow
 from app.modules.identity.service import IdentityService
-from app.modules.narrative.turn_loop import TurnInput, TurnLoop
+from app.modules.narrative.turn_loop import TurnInput, TurnLoop, strip_repetition
 from app.modules.sessions.models import PlaySession, SessionStatus, Turn
 from app.modules.sessions.service import SessionService
 from app.modules.memory.extraction import Extractor
@@ -346,7 +346,9 @@ async def take_turn(
         for call in outcome.tool_calls:
             yield _sse("mechanic", call)
 
-        narration = outcome.narration
+        # Belt and braces. The turn loop already cleans this; doing it here too
+        # means a future narration path that forgets cannot write spam to disk.
+        narration = strip_repetition(outcome.narration)
         for chunk in _paragraphs(narration):
             yield _sse("narration", {"text": chunk})
 

@@ -30,7 +30,8 @@ from app.modules.sessions.models import (
     SessionStatus,
     Turn,
 )
-from app.platform.ai.context import ContextPacket, Exchange
+from app.modules.narrative.turn_loop import strip_repetition
+from app.platform.ai.context import Exchange
 
 
 class SessionService:
@@ -233,9 +234,17 @@ class SessionService:
         turns = list(reversed(list(result.scalars())))
         exchanges: list[Exchange] = []
         for turn in turns:
-            exchanges.append(Exchange("Player", turn.player_input))
+            if turn.player_input:
+                exchanges.append(Exchange("Player", turn.player_input))
             if turn.narration:
-                exchanges.append(Exchange("GM", turn.narration))
+                # Sanitised on the way *in*, not just on the way out.
+                #
+                # A turn that looped once is on disk forever. Loaded raw into
+                # context it shows the model eighty repetitions of a paragraph
+                # and invites it to continue the pattern - one bad turn poisons
+                # every turn after it. Cleaning here breaks that cycle without
+                # needing to rewrite history.
+                exchanges.append(Exchange("GM", strip_repetition(turn.narration)))
         return exchanges
 
     async def previous_session_exchanges(
