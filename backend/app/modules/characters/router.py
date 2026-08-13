@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.core.auth.deps import DbDep, PrincipalDep
-from app.core.errors import NotFoundError
+from app.core.errors import InvalidRequest, NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.characters.models import Character, Controller
 from app.modules.identity.service import IdentityService
@@ -103,6 +103,13 @@ async def create_character(
             f"'{campaign.ruleset_id}'",
             detail={"hint": "this campaign predates the ruleset registry"},
         ) from exc
+
+    # Validate through the ruleset - it owns what a legal sheet looks like.
+    built = ruleset.create_character({
+        "id": str(uuid.uuid4()),
+        "name": payload.name,
+        "attributes": payload.attributes,
+        "skills": payload.skills,
     })
 
     row = Character(
