@@ -31,12 +31,22 @@ from app.platform.ai.gateway import Capability, CompletionRequest, Message
 from app.platform.ai.prompts import render_prompt
 from app.platform.ai.router import AIRouter
 from app.platform.ai.tools import tool_specs
-from app.platform.observability.metrics import turns_resolved
+from app.platform.observability.metrics import rule_violations, turns_resolved
 
 # A model that has not gathered enough to narrate after this many rounds of
 # tool calls is confused, not thorough. Bounded so a bad turn costs a bounded
 # amount of money.
 MAX_TOOL_ROUNDS = 6
+
+# Bounding rounds is not enough. A single response can carry any number of
+# tool_use blocks, so a model that starts looping emits two hundred of them in
+# one message and every one executes, is recorded, and is rendered. That is a
+# wall of dice in the log and a wall of state changes in the database.
+#
+# A turn that legitimately needs more than a handful of calls does not exist:
+# roll something, apply what it did, maybe tick a clock.
+MAX_CALLS_PER_ROUND = 8
+MAX_CALLS_PER_TURN = 20
 
 # Narration is prose for one turn, not a chapter. Capping it bounds both the
 # bill and the blast radius of a degenerate repetition loop - a model that
@@ -235,10 +245,25 @@ class TurnLoop:
                     rejected=rejected,
                 )
 
-            # Execute every call the model made, then hand all results back at
+            # Execute the calls the model made, then hand all results back at
             # once. Batching keeps the round count - and the bill - down.
             tool_results: list[dict[str, Any]] = []
-            for call in result.tool_calls:
+
+            calls = result.tool_calls[:MAX_CALLS_PER_ROUND]
+            dropped = len(result.tool_calls) - len(calls)
+            remaining = MAX_CALLS_PER_TURN - len(recorded)
+            if remaining <= 0:
+                turns_resolved.labels(
+                    play_mode="solo", outcome="call_budget_exhausted"
+                ).inc()
+                raise UpstreamError(
+                    f"turn made more than {MAX_CALLS_PER_TURN} tool calls"
+                )
+            if len(calls) > remaining:
+                dropped += len(calls) - remaining
+                calls = calls[:remaining]
+
+            for call in calls:
                 outcome = self._executor.execute(call.name, call.arguments, scope)
                 if not outcome.ok:
                     rejected += 1
@@ -264,6 +289,21 @@ class TurnLoop:
                     # something that happened.
                     "is_error": not outcome.ok,
                 })
+
+            if dropped:
+                # Told, not silently discarded: a model that gets no signal
+                # will make the same oversized batch again next round.
+                rule = {
+                    "type": "text",
+                    "text": (
+                        f"{dropped} further tool calls were not executed. "
+                        f"At most {MAX_CALLS_PER_ROUND} calls per response and "
+                        f"{MAX_CALLS_PER_TURN} per turn. Resolve one action at "
+                        "a time, then narrate."
+                    ),
+                }
+                tool_results.append(rule)
+                rule_violations.labels(source="model").inc(dropped)
 
             messages = [
                 *messages,

@@ -331,3 +331,57 @@ async def test_rejected_tool_result_is_flagged_as_an_error():
 
     blocks = backend.calls[1].messages[-1].content
     assert blocks[0]["is_error"] is True
+
+
+async def test_a_single_response_cannot_execute_unbounded_tool_calls():
+    """Bounding rounds is not enough.
+
+    One response can carry any number of tool_use blocks. Unbounded, a looping
+    model emits two hundred in one message and every one executes, is recorded,
+    and is rendered - a wall of dice in the log and a wall of writes to state.
+    """
+    from app.modules.narrative.turn_loop import MAX_CALLS_PER_ROUND
+
+    flood = [call("query_character", actor_id="pc-1") for _ in range(200)]
+    loop, backend = loop_with(
+        CompletionResult(
+            text="", tool_calls=flood, usage=Usage(10, 5),
+            backend="fake", model="f", raw_content="x",
+        ),
+        result("You look yourself over."),
+    )
+    outcome = await loop.run(turn_input())
+    assert len(outcome.tool_calls) <= MAX_CALLS_PER_ROUND
+
+
+async def test_the_model_is_told_when_calls_are_dropped():
+    """Silently discarding them means the same oversized batch next round."""
+    flood = [call("query_character", actor_id="pc-1") for _ in range(50)]
+    loop, backend = loop_with(
+        CompletionResult(
+            text="", tool_calls=flood, usage=Usage(10, 5),
+            backend="fake", model="f", raw_content="x",
+        ),
+        result("Fine."),
+    )
+    await loop.run(turn_input())
+
+    blocks = backend.calls[1].messages[-1].content
+    notice = [b for b in blocks if b.get("type") == "text"]
+    assert notice, "model was not told calls had been dropped"
+    assert "not executed" in notice[0]["text"]
+
+
+async def test_a_turn_that_keeps_flooding_fails_rather_than_grinding():
+    from app.modules.narrative.turn_loop import MAX_CALLS_PER_TURN
+
+    def flood_response():
+        return CompletionResult(
+            text="",
+            tool_calls=[call("query_character", actor_id="pc-1") for _ in range(50)],
+            usage=Usage(10, 5), backend="fake", model="f", raw_content="x",
+        )
+
+    loop, _ = loop_with(*[flood_response() for _ in range(MAX_TOOL_ROUNDS + 2)])
+    with pytest.raises(UpstreamError):
+        await loop.run(turn_input())
