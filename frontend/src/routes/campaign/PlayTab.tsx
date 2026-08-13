@@ -40,6 +40,15 @@ export function PlayTab() {
     onScroll, atBottom, unread, setUnread, toLatest, toIndex,
   } = useWindowedLog(entries, logRef, estimateTurn);
 
+  const roster = useMemo(() => characters.filter((c) => c.active), [characters]);
+  const names = useMemo(
+    () => Object.fromEntries(roster.map((c) => [c.id, c.name])),
+    [roster],
+  );
+  // With one character there is no "party" to address, and no spotlight to
+  // pick - they are always the one acting.
+  const effectiveActor = spotlight ?? (roster.length === 1 ? roster[0]!.id : null);
+
   useEffect(() => {
     void api.rules.checks(campaign.ruleset_id ?? "d20").then(setKinds).catch(() => {});
   }, [campaign.ruleset_id]);
@@ -49,13 +58,12 @@ export function PlayTab() {
     void api.sessions
       .turns(session.id)
       .then((turns) => {
-        setEntries(toEntries(turns, kinds));
+        setEntries(toEntries(turns, kinds, names));
         requestAnimationFrame(toLatest);
       })
       .catch(() => {});
-  }, [session?.id, kinds.length]);
+  }, [session?.id, kinds.length, roster.length]);
 
-  const roster = useMemo(() => characters.filter((c) => c.active), [characters]);
 
   // The rail reads live state during a turn and persisted state otherwise, so
   // damage shows immediately rather than after a refetch.
@@ -104,18 +112,20 @@ export function PlayTab() {
     append({
       id: `live-${Date.now()}`,
       kind: "action",
-      speaker: spotlight ? railCharacters.find((c) => c.id === spotlight)?.name ?? "" : "The party",
+      speaker: effectiveActor ? names[effectiveActor] ?? "" : "The party",
       text,
     });
     requestAnimationFrame(toLatest);
 
-    await takeTurn(session.id, text, spotlight, {
+    await takeTurn(session.id, text, effectiveActor, {
       onMechanic: (m) => {
-        const converted = toEntries(
+        toEntries(
           [{ ordinal: 0, actor_id: null, player_input: "", narration: "", tool_calls: [m] }],
           kinds,
-        ).filter((e) => e.kind !== "action");
-        converted.forEach((e) => append(e));
+          names,
+        )
+          .filter((e) => e.kind !== "action")
+          .forEach((e) => append(e));
         if (!atBottom) setUnread((n) => n + 1);
       },
       onNarration: (t) => append({ id: `live-n-${Date.now()}`, kind: "narration", text: t }),
@@ -248,11 +258,11 @@ export function PlayTab() {
         {!readOnly && (
           <div className="composer">
             <label className="composer__who label label--lit">
-              {spotlight
-                ? `${railCharacters.find((c) => c.id === spotlight)?.name} acts`
-                : roster.length > 1
-                  ? "The party acts"
-                  : ""}
+              {effectiveActor
+              ? `${names[effectiveActor]} acts`
+              : roster.length > 1
+                ? "The party acts"
+                : ""}
             </label>
             <textarea
               ref={inputRef}

@@ -364,3 +364,25 @@ def test_every_tool_has_a_handler():
     ex = executor()
     for name in TOOLS_BY_NAME:
         assert hasattr(ex, f"_do_{name}"), f"{name} has no handler"
+
+
+def test_every_tier_has_narration_guidance():
+    """Without it a model reports the outcome ('the check succeeded') because
+    that is what the tool result literally says."""
+    from app.platform.ai.executor import _NARRATION_GUIDANCE
+    from app.modules.rules.types import Tier
+
+    for tier in Tier:
+        assert tier.value in _NARRATION_GUIDANCE, f"no guidance for {tier.value}"
+
+
+def test_roll_result_never_names_the_tier_to_the_narrator():
+    """The dice are shown to the player separately; prose that repeats them
+    reads like a spreadsheet."""
+    from app.platform.ai.executor import _NARRATION_GUIDANCE
+
+    banned = ("succeeded", "failed", "DC", "critical success", "partial success")
+    for tier, text in _NARRATION_GUIDANCE.items():
+        lowered = text.lower()
+        for word in banned:
+            assert word.lower() not in lowered, f"{tier} guidance says '{word}'"

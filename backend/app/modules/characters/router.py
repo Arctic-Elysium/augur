@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -18,6 +18,7 @@ from app.core.errors import InvalidRequest, NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.characters.models import Character, Controller
 from app.modules.identity.service import IdentityService
+from app.modules.characters.kit import StartingKit
 from app.modules.memory.service import MemoryService
 from app.modules.rules import registry
 
@@ -87,7 +88,7 @@ async def _member_campaign(db, principal, campaign_id: uuid.UUID) -> Campaign:
 
 @router.post("", response_model=CharacterOut, status_code=201)
 async def create_character(
-    payload: CharacterCreate, db: DbDep, principal: PrincipalDep
+    payload: CharacterCreate, request: Request, db: DbDep, principal: PrincipalDep
 ) -> Character:
     campaign = await _member_campaign(db, principal, payload.campaign_id)
     user = await IdentityService(db).get_by_subject(principal.subject)
@@ -103,7 +104,6 @@ async def create_character(
             f"'{campaign.ruleset_id}'",
             detail={"hint": "this campaign predates the ruleset registry"},
         ) from exc
-
     # Validate through the ruleset - it owns what a legal sheet looks like.
     built = ruleset.create_character({
         "id": str(uuid.uuid4()),
@@ -140,6 +140,21 @@ async def create_character(
     await MemoryService(db, campaign.id).seed_from_character(
         payload.name, payload.backstory, [h.model_dump() for h in payload.hooks]
     )
+
+    # Starting kit, inferred from what they wrote about themselves. A player
+    # who describes a locksmith should not have to also type "lockpicks" into
+    # an inventory box - and an item the fiction already gave them is the kind
+    # of thing the game master should be able to reach for.
+    if payload.backstory or payload.hooks:
+        items = await StartingKit(request.app.state.ai).infer(
+            name=payload.name,
+            backstory=payload.backstory or "",
+            hooks=[h.model_dump() for h in payload.hooks],
+        )
+        if items:
+            row.sheet = {**row.sheet, "inventory": items}
+            await db.flush()
+
     return row
 
 

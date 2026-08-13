@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -116,6 +117,28 @@ def create_app() -> FastAPI:
         if getattr(state, "spa_error", None):
             payload["frontend_error"] = state.spa_error
         return JSONResponse(status_code=200 if ready else 503, content=payload)
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        """Normalise FastAPI's validation errors onto the app's error shape.
+
+        FastAPI returns {"detail": [...]} while everything else returns
+        {"code", "message"}, so the client fell back to the bare status text and
+        every schema rejection surfaced as "Unprocessable Entity" - true, and
+        completely useless for working out which field was wrong.
+        """
+        problems = []
+        for err in exc.errors():
+            where = ".".join(str(p) for p in err["loc"] if p != "body")
+            problems.append(f"{where}: {err['msg']}" if where else err["msg"])
+        return JSONResponse(
+            status_code=422,
+            content={
+                "code": "invalid_request",
+                "message": "; ".join(problems[:4]) or "invalid request",
+                "detail": {"errors": problems},
+            },
+        )
 
     @app.exception_handler(AppError)
     async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:

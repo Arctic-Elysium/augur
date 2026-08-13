@@ -29,10 +29,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
+    // FastAPI's own validation errors arrive as {detail: [{loc, msg}, ...]}
+    // rather than the app's {code, message}. Without this the client shows
+    // "Unprocessable Entity" and the actual field problem is invisible.
+    const fromDetail = Array.isArray(body.detail)
+      ? body.detail
+          .map(
+            (d: { loc?: (string | number)[]; msg?: string }) =>
+              `${(d.loc ?? []).filter((p) => p !== "body").join(".")}: ${d.msg}`,
+          )
+          .join("; ")
+      : null;
     throw new ApiError(
       response.status,
       body.code ?? "error",
-      body.message ?? response.statusText,
+      body.message ?? fromDetail ?? response.statusText,
     );
   }
   return response.status === 204 ? (undefined as T) : response.json();

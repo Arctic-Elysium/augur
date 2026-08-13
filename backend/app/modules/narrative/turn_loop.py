@@ -16,7 +16,6 @@ concern rather than a rewrite of game logic.
 from __future__ import annotations
 
 import json
-
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,6 +36,36 @@ from app.platform.observability.metrics import turns_resolved
 # tool calls is confused, not thorough. Bounded so a bad turn costs a bounded
 # amount of money.
 MAX_TOOL_ROUNDS = 6
+
+# Narration is prose for one turn, not a chapter. Capping it bounds both the
+# bill and the blast radius of a degenerate repetition loop - a model that
+# starts repeating a paragraph will otherwise fill the whole output window.
+MAX_NARRATION_TOKENS = 900
+
+# If the same paragraph comes back this many times the model is looping, not
+# writing. Cheaper to truncate than to show the player a wall of it.
+REPEAT_LIMIT = 2
+
+
+def _strip_repetition(text: str) -> str:
+    """Drop repeated paragraphs, keeping first occurrences in order.
+
+    Degenerate repetition is a known failure mode under long contexts, and it
+    is far more jarring in a game log than a slightly short scene - the player
+    reads the same beat five times and loses trust in the whole thing.
+    """
+    seen: dict[str, int] = {}
+    kept: list[str] = []
+    for para in text.split("\n\n"):
+        key = " ".join(para.split()).lower()[:160]
+        if not key:
+            continue
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] <= 1:
+            kept.append(para.strip())
+        elif seen[key] >= REPEAT_LIMIT:
+            break
+    return "\n\n".join(kept)
 
 
 @dataclass
@@ -112,6 +141,7 @@ class TurnLoop:
         )
 
         return f"{block}\n\n{addressed}\n\n{rule}"
+
     def _system_prompt(self, turn: TurnInput) -> tuple[str, str]:
         return render_prompt(
             "gm_system",
@@ -147,6 +177,7 @@ class TurnLoop:
                     messages=messages,
                     tools=tool_specs(),
                     session_id=turn.session_id,
+                    max_tokens=MAX_NARRATION_TOKENS,
                 )
             )
 
@@ -155,7 +186,7 @@ class TurnLoop:
                     play_mode="solo", outcome="ok"
                 ).inc()
                 return TurnOutcome(
-                    narration=result.text,
+                    narration=_strip_repetition(result.text),
                     tool_calls=recorded,
                     deltas=deltas,
                     clocks=scope.clocks,
@@ -181,10 +212,16 @@ class TurnLoop:
                     "ok": outcome.ok,
                     "result": payload,
                 })
+                # `content` must be a string or a list of content blocks - a
+                # bare object is rejected by the API. Serialising keeps the
+                # structure legible to the model without inventing a schema.
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": call.id,
                     "content": json.dumps(payload),
+                    # Marks a rejection as a failure rather than a result, so
+                    # the model treats it as something to correct rather than
+                    # something that happened.
                     "is_error": not outcome.ok,
                 })
 
@@ -222,6 +259,32 @@ class TurnLoop:
         deltas[outcome.actor_id] = (
             outcome.delta if existing is None else existing.merge(outcome.delta)
         )
+
+    async def open_scene(self, turn: TurnInput) -> str:
+        """The first beat of a session.
+
+        Without this a session starts on an empty screen and a blinking
+        cursor, which asks the player to invent a scene the game master should
+        have set. No tools: nothing has happened yet, so there is nothing to
+        roll for.
+        """
+        system, _ = render_prompt(
+            "open_scene",
+            tone=turn.tone,
+            premise=turn.text or "Not yet described.",
+            party=self._party_block(turn),
+            context=turn.context.render() or "Nothing established yet.",
+        )
+        result = await self._ai.complete(
+            CompletionRequest(
+                capability=Capability.NARRATE_SCENE,
+                system=system,
+                messages=[Message(role="user", content="Open the session.")],
+                session_id=turn.session_id,
+                max_tokens=MAX_NARRATION_TOKENS,
+            )
+        )
+        return _strip_repetition(result.text)
 
     # ------------------------------------------------------------ streaming
 

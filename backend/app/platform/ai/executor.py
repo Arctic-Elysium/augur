@@ -93,6 +93,29 @@ class ToolRejection(Exception):
         self.hint = hint
 
 
+# Per-tier narration guidance. Never mention the tier, the number, or the word
+# "check" - the dice are already shown to the player separately, and repeating
+# them in prose is how a game master starts sounding like a spreadsheet.
+_NARRATION_GUIDANCE = {
+    "crit_success": (
+        "It goes better than they had any right to expect. Show that, do not "
+        "say it."
+    ),
+    "success": "It works. Show it working, and move the scene forward.",
+    "partial": (
+        "They get what they wanted AND it costs them something concrete - "
+        "noise, time, a broken tool, someone noticing. Name the cost."
+    ),
+    "failure": (
+        "It does not work. Do not stall the scene: the failure should change "
+        "the situation, not just deny it."
+    ),
+    "crit_failure": (
+        "It fails and makes things worse in a way they will have to deal with."
+    ),
+}
+
+
 class ToolExecutor:
     def __init__(self, engine: RulesEngine) -> None:
         self._engine = engine
@@ -259,20 +282,29 @@ class ToolExecutor:
         payload = resolution.result.to_narrator()
         payload["difficulty"] = difficulty.value
         payload["locked"] = resolution.locked
+
+        # Every tier gets an instruction, not just the criticals. Left to
+        # itself a model reports the outcome ("the check succeeded") because
+        # that is what the tool result literally says - and a reported roll is
+        # the least interesting thing that can happen at a table.
+        tier = resolution.result.tier
+        payload["instruction"] = _NARRATION_GUIDANCE.get(
+            tier.value, "Narrate what this means in the fiction."
+        )
         if resolution.locked:
             payload["instruction"] = (
                 "This was already attempted under the same circumstances. "
                 "Describe finding nothing new rather than re-resolving it."
             )
         if resolution.result.boon:
-            payload["instruction"] = (
-                "Narrate the success AND deliver the boon: something beyond "
-                "what was sought, at the stated scale."
+            payload["instruction"] += (
+                " Then deliver the boon: something beyond what was sought, at "
+                "the stated scale, as a specific thing in the world."
             )
         if resolution.result.setback:
-            payload["instruction"] = (
-                "Narrate the failure AND deliver the setback: a cost beyond "
-                "merely not succeeding, at the stated scale."
+            payload["instruction"] += (
+                " Then deliver the setback: a cost beyond merely not "
+                "succeeding, at the stated scale, that they can point at."
             )
 
         return ToolOutcome(

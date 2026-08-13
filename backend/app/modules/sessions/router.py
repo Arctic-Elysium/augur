@@ -87,12 +87,51 @@ async def _authorize(db, principal, campaign_id: uuid.UUID) -> Campaign:
 
 @router.post("", response_model=SessionOut, status_code=201)
 async def start_session(
-    payload: StartSession, db: DbDep, principal: PrincipalDep
+    payload: StartSession, request: Request, db: DbDep, principal: PrincipalDep
 ) -> PlaySession:
     campaign = await _authorize(db, principal, payload.campaign_id)
-    return await SessionService(db).start(
-        campaign.id, ruleset_id=campaign.ruleset_id
-    )
+    service = SessionService(db)
+    session = await service.start(campaign.id, ruleset_id=campaign.ruleset_id)
+
+    # Set the scene before the player has to. A blank screen and a cursor asks
+    # them to do the game master's job.
+    party = await service.party(campaign.id)
+    if party:
+        memory = MemoryService(db, campaign.id)
+        source = DatabaseContextSource(
+            memory,
+            previous=await service.previous_session_exchanges(
+                campaign.id, session.number
+            ),
+        )
+        await source.preload()
+
+        engine = await service.engine_for(session, campaign.ruleset_id)
+        opening = await TurnLoop(request.app.state.ai, engine).open_scene(
+            TurnInput(
+                session_id=str(session.id),
+                scene_id=session.scene_id,
+                text=campaign.premise or "",
+                actor_id=None,
+                party=party,
+                context=ContextBuilder().build(
+                    source, str(session.id), session.scene_id
+                ),
+                tone=(campaign.settings or {}).get("tone", "Grounded and grim."),
+            )
+        )
+        if opening:
+            await service.record_turn(
+                session,
+                actor_id=None,
+                player_input="",
+                narration=opening,
+                tool_calls=[],
+                deltas=[],
+                prompt_version="open_scene",
+            )
+
+    return session
 
 
 @router.get("", response_model=list[SessionOut])

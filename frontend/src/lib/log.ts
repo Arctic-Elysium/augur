@@ -42,6 +42,19 @@ export type Entry =
   | { id: string; kind: "event"; index: number; text: string; bad?: boolean }
   | { id: string; kind: "scene"; index: number; text: string };
 
+/** Tools the model uses to look things up rather than to change them.
+ *
+ * These are the GM checking their notes. Surfacing them turns the log into a
+ * debug trace - "query character" appearing when the player said "I put it in
+ * my pack" tells them nothing and breaks the fiction. Failures still show,
+ * because a refused lookup explains narration that would otherwise look
+ * unmotivated. */
+const SILENT_TOOLS = new Set([
+  "query_character",
+  "list_available_checks",
+  "list_clocks",
+]);
+
 const TIER_TO_OUTCOME: Record<string, Outcome> = {
   crit_success: "critical-success",
   success: "success",
@@ -54,7 +67,11 @@ function labelFor(kindId: string, kinds: CheckKind[]): string {
   return kinds.find((k) => k.id === kindId)?.label ?? kindId.replace(/_/g, " ");
 }
 
-export function toEntries(turns: TurnRecord[], kinds: CheckKind[] = []): Entry[] {
+export function toEntries(
+  turns: TurnRecord[],
+  kinds: CheckKind[] = [],
+  names: Record<string, string> = {},
+): Entry[] {
   const entries: Entry[] = [];
   let index = 0;
   const push = (e: NewEntry) => entries.push({ ...e, index: index++ } as Entry);
@@ -63,12 +80,16 @@ export function toEntries(turns: TurnRecord[], kinds: CheckKind[] = []): Entry[]
     push({
       id: `t${turn.ordinal}-in`,
       kind: "action",
-      speaker: turn.actor_id ? "" : "The party",
+      // Name whoever acted. "The party" for a one-character game reads as a
+      // bug, and with several characters it hides which one is doing the thing.
+      speaker: turn.actor_id ? names[turn.actor_id] ?? "" : "The party",
       text: turn.player_input,
     });
 
     for (const [i, call] of turn.tool_calls.entries()) {
       const r = call.result as Record<string, unknown>;
+
+      if (call.ok && SILENT_TOOLS.has(call.name)) continue;
 
       if (!call.ok) {
         // Surfaced rather than hidden: a rejected call means the engine
