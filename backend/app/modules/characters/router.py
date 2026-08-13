@@ -92,13 +92,17 @@ async def create_character(
     campaign = await _member_campaign(db, principal, payload.campaign_id)
     user = await IdentityService(db).get_by_subject(principal.subject)
 
-    ruleset = registry.get(campaign.ruleset_id)
-    # Validate through the ruleset - it owns what a legal sheet looks like.
-    built = ruleset.create_character({
-        "id": str(uuid.uuid4()),
-        "name": payload.name,
-        "attributes": payload.attributes,
-        "skills": payload.skills,
+    try:
+        ruleset = registry.get(campaign.ruleset_id)
+    except InvalidRequest as exc:
+        # Names the campaign, not just the id. "unknown ruleset: core" arriving
+        # from a character POST gives no hint that the *campaign* is the thing
+        # that is wrong.
+        raise InvalidRequest(
+            f"campaign '{campaign.name}' is bound to an unknown ruleset "
+            f"'{campaign.ruleset_id}'",
+            detail={"hint": "this campaign predates the ruleset registry"},
+        ) from exc
     })
 
     row = Character(
