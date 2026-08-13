@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { api, type Campaign, type PlayMode } from "../lib/api";
 
 const MODES: { value: PlayMode; label: string; note: string }[] = [
@@ -16,6 +17,7 @@ export function CampaignList() {
   const [premise, setPremise] = useState("");
   const [mode, setMode] = useState<PlayMode>("solo");
   const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState<Campaign | null>(null);
 
   const load = () =>
     api.campaigns.list().then(setCampaigns).catch((e) => setError(e.message));
@@ -44,15 +46,35 @@ export function CampaignList() {
     }
   };
 
-  if (error) return <p className="notice notice--bad">{error}</p>;
-  if (!campaigns) return <p className="notice">Loading campaigns</p>;
+  if (error)
+    return (
+      <div className="pane">
+        <div className="pane__inner">
+          <p className="notice notice--bad">{error}</p>
+        </div>
+      </div>
+    );
+  if (!campaigns)
+    return (
+      <div className="pane">
+        <div className="pane__inner">
+          <p className="notice">Loading campaigns</p>
+        </div>
+      </div>
+    );
 
   return (
-    <section className="stack">
-      <header className="pagehead">
-        <h1 className="pagehead__title">Campaigns</h1>
+    <div className="pane">
+      <div className="pane__inner">
+      <header className="pane__head">
+        <div>
+          <h1 className="pane__title">Campaigns</h1>
+          <span className="pane__sub">
+            {campaigns.length} {campaigns.length === 1 ? "campaign" : "campaigns"}
+          </span>
+        </div>
         {!creating && (
-          <button className="button" onClick={() => setCreating(true)}>
+          <button className="btn btn--go" onClick={() => setCreating(true)}>
             New campaign
           </button>
         )}
@@ -104,13 +126,10 @@ export function CampaignList() {
           </fieldset>
 
           <div className="actions">
-            <button className="button" onClick={() => void create()} disabled={busy}>
+            <button className="btn btn--go" onClick={() => void create()} disabled={busy}>
               {busy ? "Creating" : "Create campaign"}
             </button>
-            <button
-              className="button button--quiet"
-              onClick={() => setCreating(false)}
-            >
+            <button className="btn" onClick={() => setCreating(false)}>
               Cancel
             </button>
           </div>
@@ -125,18 +144,44 @@ export function CampaignList() {
       ) : (
         <ul className="cards">
           {campaigns.map((c) => (
-            <li key={c.id}>
-              <Link className="card" to={`/campaigns/${c.id}`}>
-                <span className="card__eyebrow">{c.play_mode}</span>
-                <span className="card__title">{c.name}</span>
-                <span className="card__body">
-                  {c.premise ?? "No premise set."}
-                </span>
-              </Link>
+            <li key={c.id} className="card">
+              <div className="card__row">
+                <Link
+                  to={`/campaigns/${c.id}`}
+                  style={{ display: "grid", gap: 5, textDecoration: "none", color: "inherit" }}
+                >
+                  <span className="card__eyebrow">{c.play_mode}</span>
+                  <span className="card__title">{c.name}</span>
+                  <span className="card__body">{c.premise ?? "No premise set."}</span>
+                </Link>
+                <button className="btn" onClick={() => setConfirm(c)}>
+                  Delete
+                </button>
+              </div>
             </li>
           ))}
         </ul>
       )}
-    </section>
+
+      {confirm && (
+        <ConfirmDialog
+          title={`Delete ${confirm.name}?`}
+          body={
+            "Every character, session, turn and codex entry in this campaign is " +
+            "removed permanently. This cannot be undone."
+          }
+          label="Delete campaign"
+          destructive
+          run={() => {
+            void api.campaigns
+              .remove(confirm.id)
+              .then(load)
+              .catch((e) => setError((e as Error).message));
+          }}
+          onClose={() => setConfirm(null)}
+        />
+      )}
+      </div>
+    </div>
   );
 }

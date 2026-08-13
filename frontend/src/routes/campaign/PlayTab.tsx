@@ -28,6 +28,9 @@ export function PlayTab() {
   const [spotlight, setSpotlight] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // Off by default: the log is the page, and an index that opens itself makes
+  // the prose look secondary to its own table of contents.
+  const [showScenes, setShowScenes] = useState(false);
 
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -169,22 +172,29 @@ export function PlayTab() {
           </div>
         )}
 
-        <div className="play__mid">
-          {scenes.length > 3 && (
-            <nav className="scenes" aria-label="Jump to a moment">
-              <div className="label scenes__head">This session</div>
-              {scenes.map((s) => (
+        <div className="play__head">
+          <span className="label label--lit">Session {session.number}</span>
+          <span className="play__scene">
+            {campaign.premise ?? campaign.name}
+          </span>
+          <span className="play__meta">
+            {entries.length.toLocaleString()} entries
+            {scenes.length > 3 && (
+              <>
+                {" · "}
                 <button
-                  key={s.startIndex}
-                  className="scenes__item"
-                  onClick={() => toIndex(s.startIndex)}
+                  className="linkish"
+                  onClick={() => setShowScenes((v) => !v)}
+                  aria-pressed={showScenes}
                 >
-                  {s.name}
+                  {showScenes ? "hide index" : "index"}
                 </button>
-              ))}
-            </nav>
-          )}
+              </>
+            )}
+          </span>
+        </div>
 
+        <div className="play__mid">
           <div
             className="log"
             ref={logRef}
@@ -205,6 +215,21 @@ export function PlayTab() {
             </div>
             <div className="log__pad" style={{ height: padBottom }} />
           </div>
+
+          {showScenes && scenes.length > 3 && (
+            <nav className="scenes" aria-label="Jump to a moment">
+              <div className="label scenes__head">This session</div>
+              {scenes.map((s) => (
+                <button
+                  key={s.startIndex}
+                  className="scenes__item"
+                  onClick={() => toIndex(s.startIndex)}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </nav>
+          )}
 
           {!atBottom && (
             <button

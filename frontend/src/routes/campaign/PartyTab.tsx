@@ -23,124 +23,128 @@ function SheetView({ character, onChanged }: { character: Character; onChanged: 
   };
 
   return (
-    <article className="sheetcard">
-      <header className="sheetcard__head">
-        <h3 className="sheetcard__name">{character.name}</h3>
-        <span className="sheetcard__level">Level {sheet.level}</span>
-      </header>
+    <div className="pane">
+      <div className="pane__inner">
+            <article className="sheetcard">
+              <header className="sheetcard__head">
+                <h3 className="sheetcard__name">{character.name}</h3>
+                <span className="sheetcard__level">Level {sheet.level}</span>
+              </header>
 
-      <div className="vitals">
-        <div className="vital">
-          <span className="vital__label">Health</span>
-          <span className="vital__track">
-            <span
-              className="vital__fill"
-              style={{ width: `${(sheet.hp / sheet.hp_max) * 100}%` }}
-            />
-          </span>
-          <span className="vital__value">
-            {sheet.hp}/{sheet.hp_max}
-          </span>
-        </div>
-        <div className="vital">
-          <span className="vital__label">Stress</span>
-          <span className="vital__track">
-            <span
-              className="vital__fill vital__fill--stress"
-              style={{ width: `${(sheet.stress / sheet.stress_max) * 100}%` }}
-            />
-          </span>
-          <span className="vital__value">
-            {sheet.stress}/{sheet.stress_max}
-          </span>
-        </div>
+              <div className="vitals">
+                <div className="vital">
+                  <span className="vital__label">Health</span>
+                  <span className="vital__track">
+                    <span
+                      className="vital__fill"
+                      style={{ width: `${(sheet.hp / sheet.hp_max) * 100}%` }}
+                    />
+                  </span>
+                  <span className="vital__value">
+                    {sheet.hp}/{sheet.hp_max}
+                  </span>
+                </div>
+                <div className="vital">
+                  <span className="vital__label">Stress</span>
+                  <span className="vital__track">
+                    <span
+                      className="vital__fill vital__fill--stress"
+                      style={{ width: `${(sheet.stress / sheet.stress_max) * 100}%` }}
+                    />
+                  </span>
+                  <span className="vital__value">
+                    {sheet.stress}/{sheet.stress_max}
+                  </span>
+                </div>
+              </div>
+
+              <div className="statline">
+                {attrs.map(([id, value]) => {
+                  const mod = Math.floor((value - 10) / 2);
+                  return (
+                    <div key={id} className="stat">
+                      <span className="stat__name">{id.slice(0, 3)}</span>
+                      <span className="stat__mod">{mod >= 0 ? `+${mod}` : mod}</span>
+                      <span className="stat__raw">{value}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {skills.length > 0 && (
+                <div className="sheetcard__block">
+                  <span className="field__label">Trained</span>
+                  <span className="taglist">
+                    {skills.map(([id, rank]) => (
+                      <span key={id} className="tag">
+                        {id.replace(/_/g, " ")} {"·".repeat(rank)}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              )}
+
+              {sheet.conditions.length > 0 && (
+                <div className="sheetcard__block">
+                  <span className="field__label">Conditions</span>
+                  <span className="taglist">
+                    {sheet.conditions.map((c) => (
+                      <span key={c.spec_id} className="tag tag--warn">
+                        {c.spec_id}
+                      </span>
+                    ))}
+                  </span>
+                </div>
+              )}
+
+              {character.hooks.length > 0 && (
+                <div className="sheetcard__block">
+                  <span className="field__label">Threads</span>
+                  <ul className="threads">
+                    {character.hooks.map((h, i) => (
+                      <li key={i} className="thread">
+                        <span className="thread__kind">{HOOK_LABEL[h.kind] ?? h.kind}</span>
+                        <span className="thread__subject">{h.subject}</span>
+                        {h.detail && <span className="thread__detail">{h.detail}</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="sheetcard__block">
+                <span className="field__label">Who they are</span>
+                {editing ? (
+                  <>
+                    <textarea
+                      className="field__input"
+                      rows={5}
+                      value={backstory}
+                      onChange={(e) => setBackstory(e.target.value)}
+                    />
+                    <div className="actions">
+                      <button className="button" onClick={() => void save()}>
+                        Save
+                      </button>
+                      <button className="button button--quiet" onClick={() => setEditing(false)}>
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="prose">
+                      {character.backstory || "Nothing written yet."}
+                    </p>
+                    <button className="button button--quiet" onClick={() => setEditing(true)}>
+                      Edit
+                    </button>
+                  </>
+                )}
+              </div>
+            </article>
       </div>
-
-      <div className="statline">
-        {attrs.map(([id, value]) => {
-          const mod = Math.floor((value - 10) / 2);
-          return (
-            <div key={id} className="stat">
-              <span className="stat__name">{id.slice(0, 3)}</span>
-              <span className="stat__mod">{mod >= 0 ? `+${mod}` : mod}</span>
-              <span className="stat__raw">{value}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      {skills.length > 0 && (
-        <div className="sheetcard__block">
-          <span className="field__label">Trained</span>
-          <span className="taglist">
-            {skills.map(([id, rank]) => (
-              <span key={id} className="tag">
-                {id.replace(/_/g, " ")} {"·".repeat(rank)}
-              </span>
-            ))}
-          </span>
-        </div>
-      )}
-
-      {sheet.conditions.length > 0 && (
-        <div className="sheetcard__block">
-          <span className="field__label">Conditions</span>
-          <span className="taglist">
-            {sheet.conditions.map((c) => (
-              <span key={c.spec_id} className="tag tag--warn">
-                {c.spec_id}
-              </span>
-            ))}
-          </span>
-        </div>
-      )}
-
-      {character.hooks.length > 0 && (
-        <div className="sheetcard__block">
-          <span className="field__label">Threads</span>
-          <ul className="threads">
-            {character.hooks.map((h, i) => (
-              <li key={i} className="thread">
-                <span className="thread__kind">{HOOK_LABEL[h.kind] ?? h.kind}</span>
-                <span className="thread__subject">{h.subject}</span>
-                {h.detail && <span className="thread__detail">{h.detail}</span>}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="sheetcard__block">
-        <span className="field__label">Who they are</span>
-        {editing ? (
-          <>
-            <textarea
-              className="field__input"
-              rows={5}
-              value={backstory}
-              onChange={(e) => setBackstory(e.target.value)}
-            />
-            <div className="actions">
-              <button className="button" onClick={() => void save()}>
-                Save
-              </button>
-              <button className="button button--quiet" onClick={() => setEditing(false)}>
-                Cancel
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="prose">
-              {character.backstory || "Nothing written yet."}
-            </p>
-            <button className="button button--quiet" onClick={() => setEditing(true)}>
-              Edit
-            </button>
-          </>
-        )}
-      </div>
-    </article>
+    </div>
   );
 }
 
@@ -151,43 +155,43 @@ export function PartyTab() {
 
   if (building) {
     return (
-      <Builder
-        campaignId={campaign.id}
-        onDone={() => {
-          setBuilding(false);
-          void reload();
-        }}
-        onCancel={() => setBuilding(false)}
-      />
-    );
-  }
+              <Builder
+                campaignId={campaign.id}
+                onDone={() => {
+                  setBuilding(false);
+                  void reload();
+                }}
+                onCancel={() => setBuilding(false)}
+              />
+            );
+          }
 
-  return (
-    <div className="stack">
-      <div className="section__head">
-        <h2 className="section__title">
-          {roster.length} {roster.length === 1 ? "character" : "characters"}
-        </h2>
-        <button className="button" onClick={() => setBuilding(true)}>
-          Build a character
-        </button>
-      </div>
+          return (
+            <div className="stack">
+              <div className="section__head">
+                <h2 className="section__title">
+                  {roster.length} {roster.length === 1 ? "character" : "characters"}
+                </h2>
+                <button className="button" onClick={() => setBuilding(true)}>
+                  Build a character
+                </button>
+              </div>
 
-      {roster.length === 0 ? (
-        <div className="empty">
-          <h2>Nobody here yet</h2>
-          <p>
-            Build someone. In solo mode you can run several at once — each takes
-            their own turns and gets their own attempt at the same locked door.
-          </p>
-        </div>
-      ) : (
-        <div className="sheets">
-          {roster.map((c) => (
-            <SheetView key={c.id} character={c} onChanged={() => void reload()} />
-          ))}
-        </div>
-      )}
-    </div>
+              {roster.length === 0 ? (
+                <div className="empty">
+                  <h2>Nobody here yet</h2>
+                  <p>
+                    Build someone. In solo mode you can run several at once — each takes
+                    their own turns and gets their own attempt at the same locked door.
+                  </p>
+                </div>
+              ) : (
+                <div className="sheets">
+                  {roster.map((c) => (
+                    <SheetView key={c.id} character={c} onChanged={() => void reload()} />
+                  ))}
+                </div>
+              )}
+            </div>
   );
 }

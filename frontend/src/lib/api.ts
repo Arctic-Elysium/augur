@@ -166,6 +166,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    remove: (id: string) =>
+      request<void>(`/campaigns/${id}`, { method: "DELETE" }),
   },
 
   characters: {

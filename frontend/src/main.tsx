@@ -11,8 +11,7 @@ import { InventoryTab } from "./routes/campaign/InventoryTab";
 import { JournalTab } from "./routes/campaign/JournalTab";
 import { CodexTab } from "./routes/campaign/CodexTab";
 import { SessionsTab } from "./routes/campaign/SessionsTab";
-import "./styles/app-shell.css";
-import "./styles/tokens.css";
+import "./styles/app.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

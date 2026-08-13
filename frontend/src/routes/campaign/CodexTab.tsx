@@ -33,94 +33,112 @@ export function CodexTab() {
       .catch((e) => setError((e as Error).message));
   }, [campaign.id]);
 
-  if (error) return <p className="notice notice--bad">{error}</p>;
-  if (!entities) return <p className="notice">Loading codex</p>;
-
-  if (entities.length === 0) {
-    return (
-      <div className="empty">
-        <h2>Nothing recorded yet</h2>
-        <p>
-          People, places and things get written here as they come up in play.
-          The game master reads from the same record, which is what keeps a long
-          campaign from contradicting itself.
-        </p>
-      </div>
-    );
-  }
-
-  const present = KINDS.filter((k) => entities.some((e) => e.kind === k));
-  const shown = filter ? entities.filter((e) => e.kind === filter) : entities;
+  const present = KINDS.filter((k) => (entities ?? []).some((e) => e.kind === k));
+  const shown =
+    filter && entities ? entities.filter((e) => e.kind === filter) : entities ?? [];
 
   return (
-    <div className="stack">
-      <div className="choices--inline">
-        <button
-          className={`chip ${filter === null ? "chip--on" : ""}`}
-          onClick={() => setFilter(null)}
-        >
-          All {entities.length}
-        </button>
-        {present.map((kind) => (
-          <button
-            key={kind}
-            className={`chip ${filter === kind ? "chip--on" : ""}`}
-            onClick={() => setFilter(kind)}
-          >
-            {KIND_LABEL[kind] ?? kind}{" "}
-            {entities.filter((e) => e.kind === kind).length}
-          </button>
-        ))}
-      </div>
+    <div className="pane">
+      <div className="pane__inner">
+        <header className="pane__head">
+          <div>
+            <h1 className="pane__title">Codex</h1>
+            <span className="pane__sub">
+              What the world has established, and where it was established.
+            </span>
+          </div>
+        </header>
 
-      <ul className="codex">
-        {shown.map((entity) => {
-          const expanded = open === entity.ref;
-          return (
-            <li key={entity.ref} className="entry-card">
+        {error && <p className="notice notice--bad">{error}</p>}
+        {!entities && !error && <p className="notice">Loading codex</p>}
+
+        {entities && entities.length === 0 && (
+          <div className="empty">
+            <h2>Nothing recorded yet</h2>
+            <p>
+              People, places and things get written here as they come up in play.
+              The game master reads from the same record, which is what keeps a
+              long campaign from contradicting itself.
+            </p>
+          </div>
+        )}
+
+        {entities && entities.length > 0 && (
+          <>
+            <div className="choices--inline">
               <button
-                className="entry-card__head"
-                onClick={() => setOpen(expanded ? null : entity.ref)}
-                aria-expanded={expanded}
+                className={`filter ${filter === null ? "filter--on" : ""}`}
+                onClick={() => setFilter(null)}
               >
-                <span className="entry-card__kind">
-                  {KIND_LABEL[entity.kind] ?? entity.kind}
-                </span>
-                <span className="entry-card__name">{entity.name}</span>
-                <span className="entry-card__meta">
-                  {entity.first_seen_session
-                    ? `first seen session ${entity.first_seen_session}`
-                    : ""}
-                </span>
+                All {entities.length}
               </button>
+              {present.map((kind) => (
+                <button
+                  key={kind}
+                  className={`filter ${filter === kind ? "filter--on" : ""}`}
+                  onClick={() => setFilter(kind)}
+                >
+                  {KIND_LABEL[kind] ?? kind}{" "}
+                  {entities.filter((e) => e.kind === kind).length}
+                </button>
+              ))}
+            </div>
 
-              {entity.summary && (
-                <p className="entry-card__summary">{entity.summary}</p>
-              )}
+            <ul className="codex">
+              {shown.map((entity) => {
+                const expanded = open === entity.ref;
+                return (
+                  <li key={entity.ref} className="entry-card">
+                    <button
+                      className="entry-card__head"
+                      onClick={() => setOpen(expanded ? null : entity.ref)}
+                      aria-expanded={expanded}
+                    >
+                      <span className="entry-card__kind">
+                        {KIND_LABEL[entity.kind] ?? entity.kind}
+                      </span>
+                      <span className="entry-card__name">{entity.name}</span>
+                      <span className="entry-card__meta">
+                        {entity.first_seen_session
+                          ? `session ${entity.first_seen_session}`
+                          : ""}
+                      </span>
+                    </button>
 
-              {expanded && (
-                <div className="entry-card__facts">
-                  {entity.facts.length === 0 ? (
-                    <p className="field__hint">Nothing further established.</p>
-                  ) : (
-                    <ul className="facts">
-                      {entity.facts.map((fact, i) => (
-                        <li key={i} className="fact">
-                          <span className="fact__predicate">{fact.predicate}</span>
-                          <span className="fact__object">{fact.object_text}</span>
-                          {fact.session_number && (
-                            <span className="fact__when">s{fact.session_number}</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+                    {entity.summary && (
+                      <p className="entry-card__summary">{entity.summary}</p>
+                    )}
+
+                    {expanded && (
+                      <div className="entry-card__facts">
+                        {entity.facts.length === 0 ? (
+                          <p className="field__hint">Nothing further established.</p>
+                        ) : (
+                          <ul className="facts">
+                            {entity.facts.map((fact, i) => (
+                              <li key={i} className="fact">
+                                <span className="fact__predicate">
+                                  {fact.predicate}
+                                </span>
+                                <span>{fact.object_text}</span>
+                                {fact.session_number && (
+                                  <span className="fact__when">
+                                    s{fact.session_number}
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+      </div>
     </div>
   );
 }
