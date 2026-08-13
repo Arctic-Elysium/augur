@@ -288,8 +288,16 @@ export function Builder({
         <button className="btn" onClick={onCancel}>
           Cancel
         </button>
-        {!ready && name.trim() !== "" && (
-          <span className="field__hint">Spend down to zero or below to finish.</span>
+        {!ready && (
+          <span className="field__hint">
+            {name.trim() === ""
+              ? "Give them a name to finish."
+              : left < 0
+                ? `${-left} points over budget.`
+                : skillLeft < 0
+                  ? `${-skillLeft} training points over.`
+                  : ""}
+          </span>
         )}
       </div>
     </div>
