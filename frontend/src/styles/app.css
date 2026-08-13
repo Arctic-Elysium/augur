@@ -481,3 +481,14 @@ a:hover { color: var(--ink); text-decoration-thickness: 2px; }
 }
 .play__scene { font: 400 15px/1.2 var(--serif); color: var(--ink-dim); }
 .play__meta { margin-left: auto; font: 500 9px/1 var(--mono); color: var(--ink-trace); text-transform: uppercase; letter-spacing: .1em; }
+
+/* ---------- scrollbars ---------- */
+/* The default light scrollbar is the brightest thing on a dark field and pulls
+   the eye straight to the edge of the page. Firefox takes the standard
+   property; WebKit needs its own. */
+* { scrollbar-width: thin; scrollbar-color: var(--rule-firm) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--rule-firm); border: 3px solid var(--field); border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--ink-trace); }
+*::-webkit-scrollbar-corner { background: transparent; }
