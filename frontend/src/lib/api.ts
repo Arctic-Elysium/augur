@@ -122,6 +122,32 @@ export interface CheckKind {
   lock_policy: string;
 }
 
+export interface CodexFact {
+  subject_ref: string;
+  predicate: string;
+  object_text: string;
+  session_number: number | null;
+}
+
+export interface CodexEntity {
+  ref: string;
+  kind: string;
+  name: string;
+  summary: string;
+  mentions: number;
+  first_seen_session: number | null;
+  state: Record<string, unknown>;
+  facts: CodexFact[];
+}
+
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  pinned: boolean;
+  session_number: number | null;
+}
+
 export const api = {
   me: () => request<Me>("/auth/me"),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
@@ -185,6 +211,27 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ character_id: characterId }),
       }),
+  },
+
+  memory: {
+    codex: (campaignId: string) =>
+      request<{ entities: CodexEntity[]; unattached_facts: CodexFact[] }>(
+        `/memory/codex?campaign_id=${campaignId}`,
+      ),
+    notes: (campaignId: string) =>
+      request<Note[]>(`/memory/notes?campaign_id=${campaignId}`),
+    createNote: (campaignId: string, body: Partial<Note>) =>
+      request<Note>(`/memory/notes?campaign_id=${campaignId}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    updateNote: (id: string, body: Partial<Note>) =>
+      request<Note>(`/memory/notes/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    deleteNote: (id: string) =>
+      request<void>(`/memory/notes/${id}`, { method: "DELETE" }),
   },
 
   rules: {
