@@ -74,8 +74,9 @@ function Sheet({
   );
 }
 
-export function Play() {
-  const { sessionId } = useParams<{ sessionId: string }>();
+export function Play({ sessionId: propSessionId }: { sessionId?: string } = {}) {
+  const params = useParams<{ sessionId: string }>();
+  const sessionId = propSessionId ?? params.sessionId;
   const [session, setSession] = useState<PlaySession | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [party, setParty] = useState<Record<string, PartyMember>>({});
@@ -159,7 +160,7 @@ export function Play() {
   return (
     <div className="play">
       <aside className="play__party">
-        {session && (
+        {session && !propSessionId && (
           <Link className="crumb" to={`/campaigns/${session.campaign_id}`}>
             Back to campaign
           </Link>

@@ -62,6 +62,12 @@ export interface CharacterSheet {
   level: number;
 }
 
+export interface Hook {
+  kind: string;
+  subject: string;
+  detail: string;
+}
+
 export interface Character {
   id: string;
   campaign_id: string;
@@ -69,6 +75,22 @@ export interface Character {
   controller: "player" | "ai";
   active: boolean;
   sheet: CharacterSheet;
+  backstory: string | null;
+  hooks: Hook[];
+}
+
+export interface BuildRules {
+  method: string;
+  attributes: { id: string; label: string; description: string }[];
+  budget: number;
+  base: number;
+  min: number;
+  max: number;
+  costs: Record<string, number>;
+  skills: { id: string; label: string; attribute: string }[];
+  skill_points: number;
+  skill_max: number;
+  derived: Record<string, string>;
 }
 
 export interface PlaySession {
@@ -122,9 +144,24 @@ export const api = {
       name: string;
       attributes: Record<string, number>;
       skills?: Record<string, number>;
+      backstory?: string;
+      hooks?: Hook[];
     }) =>
       request<Character>("/characters", {
         method: "POST",
+        body: JSON.stringify(body),
+      }),
+    update: (
+      id: string,
+      body: {
+        name?: string;
+        backstory?: string;
+        hooks?: Hook[];
+        inventory?: string[];
+      },
+    ) =>
+      request<Character>(`/characters/${id}`, {
+        method: "PATCH",
         body: JSON.stringify(body),
       }),
     retire: (id: string) =>
@@ -153,5 +190,7 @@ export const api = {
   rules: {
     checks: (rulesetId = "d20") =>
       request<CheckKind[]>(`/rules/${rulesetId}/checks`),
+    build: (rulesetId = "d20") =>
+      request<BuildRules>(`/rules/${rulesetId}/build`),
   },
 };
