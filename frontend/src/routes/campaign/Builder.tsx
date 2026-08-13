@@ -45,7 +45,7 @@ export function Builder({
   if (error && !rules) return <p className="notice notice--bad">{error}</p>;
   if (!rules) return <p className="notice">Loading build rules</p>;
 
-  const cost = (v: number) => rules.costs[String(v)] ?? 0;
+  const cost = (v: number) => rules.costs[String(v)] ?? (rules.costs as Record<number, number>)[v] ?? 0;
   const spent = Object.values(attributes).reduce((a, v) => a + cost(v), 0);
   const left = rules.budget - spent;
   const skillSpent = Object.values(skills).reduce((a, b) => a + b, 0);
