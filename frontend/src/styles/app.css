@@ -189,7 +189,14 @@ a:hover { color: var(--ink); text-decoration-thickness: 2px; }
 .meter__seg--on { background: var(--ink-dim); }
 .meter--stress .meter__seg { border: 1px solid rgba(232,226,212,.18); background: none; }
 .meter--stress .meter__seg--on { background: var(--ink-faint); border-color: var(--ink-faint); }
-.chip { border: 1px solid rgba(232,226,212,.2); padding: 3px 6px; font: 600 8.5px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-mute); }
+.chip {
+  display: inline-block;
+  border: 1px solid var(--rule-firm); padding: 4px 8px;
+  background: none; color: var(--ink-mute);
+  font: 600 8.5px/1 var(--sans); letter-spacing: .12em; text-transform: uppercase;
+}
+button.chip { cursor: pointer; }
+button.chip:hover { color: var(--ink); border-color: var(--rust); }
 .rail__strip { display: none; flex-direction: column; align-items: center; padding: 14px 0; }
 
 /* ---------- panels + tables (Party / Inventory / Journal / Codex / Sessions) ---------- */
@@ -492,3 +499,8 @@ a:hover { color: var(--ink); text-decoration-thickness: 2px; }
 *::-webkit-scrollbar-thumb { background: var(--rule-firm); border: 3px solid var(--field); border-radius: 999px; }
 *::-webkit-scrollbar-thumb:hover { background: var(--ink-trace); }
 *::-webkit-scrollbar-corner { background: transparent; }
+
+/* Catch-all. Any button that slips through without a class still inherits the
+   field rather than the operating system's default control - the white slab
+   that shows up is browser chrome, not a colour anyone chose. */
+button { background: none; color: inherit; font-family: inherit; }
