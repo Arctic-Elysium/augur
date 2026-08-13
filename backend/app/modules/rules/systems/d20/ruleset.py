@@ -232,7 +232,7 @@ class D20Ruleset:
             # Cumulative cost to reach each score from the base. Rising costs
             # at the top end are what stop a character being three 15s and
             # three dump stats.
-            "costs": POINT_COSTS,
+            "costs": {str(k): v for k, v in POINT_COSTS.items()},
             "skills": [
                 {"id": k.id, "label": k.label, "attribute": k.attribute}
                 for k in CHECK_KINDS
