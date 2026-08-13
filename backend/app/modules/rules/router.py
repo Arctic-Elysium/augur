@@ -43,6 +43,12 @@ async def character_schema(ruleset_id: str, _: PrincipalDep) -> dict:
     return registry.get(ruleset_id).character_schema()
 
 
+@router.get("/{ruleset_id}/build")
+async def build_rules(ruleset_id: str, _: PrincipalDep) -> dict:
+    """Point costs, budgets and legal ranges. Drives the builder UI."""
+    return registry.get(ruleset_id).build_rules()
+
+
 @router.get("/{ruleset_id}/checks", response_model=list[CheckKindOut])
 async def list_checks(ruleset_id: str, _: PrincipalDep) -> list[CheckKindOut]:
     return [

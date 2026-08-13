@@ -43,6 +43,15 @@ class Ruleset(Protocol):
 
     def create_character(self, spec: dict[str, Any]) -> Character: ...
 
+    def build_rules(self) -> dict[str, Any]:
+        """How a character is built in this system.
+
+        Published rather than hardcoded in the client, because point costs and
+        legal ranges are the ruleset's business - a d6-pool system buys dice,
+        not attribute scores. The builder UI renders from this.
+        """
+        ...
+
     # --- checks ---
 
     def check_kinds(self) -> tuple[CheckKind, ...]:

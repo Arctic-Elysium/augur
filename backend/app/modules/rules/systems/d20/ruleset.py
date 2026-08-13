@@ -42,6 +42,26 @@ from app.modules.rules.types import (
 
 ATTRIBUTES = ("might", "agility", "endurance", "wits", "insight", "presence")
 
+ATTRIBUTE_BLURBS = {
+    "might": "Force, grip, and the weight you can put behind a thing.",
+    "agility": "Speed, balance, and hands that do what you tell them.",
+    "endurance": "What you can absorb and keep going through. Sets your health.",
+    "wits": "Recall, reasoning, and how fast you put things together.",
+    "insight": "What you notice, and what you read in people.",
+    "presence": "How much room you take up in a conversation.",
+}
+
+# Point buy. Costs rise at the top so a character cannot be three maxima and
+# three dump stats - the curve is what makes the choice interesting.
+POINT_BASE = 8
+POINT_MIN = 8
+POINT_MAX = 15
+POINT_BUDGET = 27
+POINT_COSTS = {8: 0, 9: 1, 10: 2, 11: 3, 12: 4, 13: 5, 14: 7, 15: 9}
+
+SKILL_POINTS = 6
+SKILL_MAX = 3
+
 # Margin thresholds, applied to (d20 + modifiers) - dc.
 CRIT_SUCCESS_MARGIN = 10
 SUCCESS_MARGIN = 0
@@ -175,6 +195,33 @@ class D20Ruleset:
             },
         }
 
+    def build_rules(self) -> dict[str, Any]:
+        return {
+            "method": "point_buy",
+            "attributes": [
+                {"id": a, "label": a.capitalize(), "description": ATTRIBUTE_BLURBS[a]}
+                for a in ATTRIBUTES
+            ],
+            "budget": POINT_BUDGET,
+            "base": POINT_BASE,
+            "min": POINT_MIN,
+            "max": POINT_MAX,
+            # Cumulative cost to reach each score from the base. Rising costs
+            # at the top end are what stop a character being three 15s and
+            # three dump stats.
+            "costs": POINT_COSTS,
+            "skills": [
+                {"id": k.id, "label": k.label, "attribute": k.attribute}
+                for k in CHECK_KINDS
+            ],
+            "skill_points": SKILL_POINTS,
+            "skill_max": SKILL_MAX,
+            "derived": {
+                "hp_max": "10 + (endurance modifier x 2)",
+                "stress_max": "6",
+            },
+        }
+
     def create_character(self, spec: dict[str, Any]) -> Character:
         attributes = spec.get("attributes") or {}
         missing = [a for a in ATTRIBUTES if a not in attributes]
@@ -186,13 +233,39 @@ class D20Ruleset:
             if not 3 <= value <= 18:
                 raise InvalidRequest(f"{name} out of range: {value}")
 
+        # Enforce the point budget server-side. The builder shows a running
+        # total, but a client is not a validator - nothing stops a crafted
+        # request asking for six 18s.
+        if spec.get("enforce_build", True):
+            over = [
+                n for n, v in attributes.items() if not POINT_MIN <= v <= POINT_MAX
+            ]
+            if over:
+                raise InvalidRequest(
+                    f"scores must be {POINT_MIN}-{POINT_MAX} at creation: "
+                    f"{', '.join(over)}"
+                )
+            spent = sum(POINT_COSTS[v] for v in attributes.values())
+            if spent > POINT_BUDGET:
+                raise InvalidRequest(
+                    f"point buy over budget: {spent} spent of {POINT_BUDGET}"
+                )
+
         endurance_mod = (attributes["endurance"] - 10) // 2
         hp_max = spec.get("hp_max") or max(1, 10 + endurance_mod * 2)
 
         skills = spec.get("skills") or {}
-        for skill in skills:
+        for skill, rank in skills.items():
             if skill not in _KINDS_BY_ID:
                 raise InvalidRequest(f"unknown skill: {skill}")
+            if not 0 <= rank <= SKILL_MAX:
+                raise InvalidRequest(f"{skill} rank out of range: {rank}")
+        if spec.get("enforce_build", True):
+            total = sum(skills.values())
+            if total > SKILL_POINTS:
+                raise InvalidRequest(
+                    f"skill points over budget: {total} of {SKILL_POINTS}"
+                )
 
         return Character(
             id=spec["id"],
@@ -385,6 +458,9 @@ class D20Ruleset:
 
     def describe_for_model(self, actor: Character) -> str:
         parts = [
+            # The id is load-bearing, not decoration: every tool call takes an
+            # actor_id, and a model that has only seen names will invent one.
+            # A rejected call costs a whole extra round trip.
             f"{actor.name} (level {actor.level}) [actor_id: {actor.id}]",
             f"HP {actor.hp}/{actor.hp_max}, Stress {actor.stress}/{actor.stress_max}",
             "Attributes: "

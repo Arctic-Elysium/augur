@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 import uuid
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String
+from sqlalchemy import Boolean, Enum, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -50,3 +50,10 @@ class Character(UUIDPrimaryKey, Timestamped, Base):
     # Retired characters stay for the record but leave the party.
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     sheet: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Free prose. What the player wrote about who this person is.
+    backstory: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Structured hooks: a person owed, a place fled, a thing wanted. These are
+    # not flavour - they are seeded into canon so the GM can actually use them,
+    # which is the difference between a backstory that matters and one that
+    # sits unread on a sheet.
+    hooks: Mapped[list] = mapped_column(JSONB, default=list)
