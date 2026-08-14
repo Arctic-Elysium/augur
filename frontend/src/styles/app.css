@@ -508,3 +508,6 @@ button.chip:hover { color: var(--ink); border-color: var(--rust); }
    that shows up is browser chrome, not a colour anyone chose. */
 button { background: none; color: inherit; font-family: inherit; }
 .entry-card__actions { display: flex; gap: 16px; padding-top: 7px; border-top: 1px solid var(--rule-soft); }
+.gone { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; padding: 10px 0; border-bottom: 1px solid var(--rule-soft); color: var(--ink-faint); }
+.gone__name { font: 400 15px/1.2 var(--serif); color: var(--ink-mute); }
+.gone__reason { grid-column: 1; font-size: 13px; }

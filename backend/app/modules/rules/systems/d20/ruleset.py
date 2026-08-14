@@ -229,9 +229,13 @@ class D20Ruleset:
             "base": POINT_BASE,
             "min": POINT_MIN,
             "max": POINT_MAX,
-            # Cumulative cost to reach each score from the base. Rising costs
-            # at the top end are what stop a character being three 15s and
-            # three dump stats.
+            # Cumulative cost to reach each score. Rising costs at the top end
+            # stop a character being three 15s and three dump stats.
+            #
+            # Keys are stringified deliberately: JSON has no integer keys, so a
+            # client indexing with String(score) would miss every entry and
+            # compute a spend of zero. Serialising it here makes the contract
+            # explicit rather than leaving it to whichever encoder runs.
             "costs": {str(k): v for k, v in POINT_COSTS.items()},
             "skills": [
                 {"id": k.id, "label": k.label, "attribute": k.attribute}
@@ -239,10 +243,7 @@ class D20Ruleset:
             ],
             "skill_points": SKILL_POINTS,
             "skill_max": SKILL_MAX,
-            "derived": {
-                "hp_max": "10 + (constitution modifier x 2)",
-                "stress_max": "6",
-            },
+            "derived": {"hp_max": "10 + (constitution modifier x 2)"},
         }
 
     def create_character(self, spec: dict[str, Any]) -> Character:
@@ -431,12 +432,14 @@ class D20Ruleset:
         """Only what the *system* mandates. Narrative fallout is separate."""
         if not result.rolled:
             return StateDelta()
+        # No automatic mechanical cost. A partial success costs something
+        # *concrete* - noise, time, a broken tool, someone noticing - and the
+        # narrator names it in the fiction. A generic counter ticking up was
+        # both less interesting and easy for the player to ignore.
         if result.tier is Tier.PARTIAL:
-            # The cost of "yes, but" defaults to stress. The narrator may
-            # propose a different cost, which the turn loop validates.
-            return StateDelta(stress=1, notes=("partial success incurs a cost",))
+            return StateDelta(notes=("partial success: the narrator owes a cost",))
         if result.tier is Tier.CRIT_FAILURE:
-            return StateDelta(stress=2, notes=("critical failure",))
+            return StateDelta(notes=("critical failure: the narrator owes a setback",))
         return StateDelta()
 
     def tick_conditions(self, actor: Character) -> StateDelta:
@@ -473,8 +476,6 @@ class D20Ruleset:
             skills=actor.skills,
             hp=max(0, min(actor.hp_max, actor.hp + delta.hp)),
             hp_max=actor.hp_max,
-            stress=max(0, min(actor.stress_max, actor.stress + delta.stress)),
-            stress_max=actor.stress_max,
             conditions=tuple(conditions),
             inventory=tuple(inventory),
             level=actor.level,
@@ -488,7 +489,7 @@ class D20Ruleset:
             # actor_id, and a model that has only seen names will invent one.
             # A rejected call costs a whole extra round trip.
             f"{actor.name} (level {actor.level}) [actor_id: {actor.id}]",
-            f"HP {actor.hp}/{actor.hp_max}, Stress {actor.stress}/{actor.stress_max}",
+            f"HP {actor.hp}/{actor.hp_max}",
             "Attributes: "
             + ", ".join(
                 f"{a} {actor.attributes.get(a, 10)} ({actor.attribute_mod(a):+d})"

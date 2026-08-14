@@ -293,8 +293,6 @@ class Character:
     skills: dict[str, int] = field(default_factory=dict)
     hp: int = 10
     hp_max: int = 10
-    stress: int = 0
-    stress_max: int = 6
     conditions: tuple[ActiveCondition, ...] = ()
     inventory: tuple[str, ...] = ()
     level: int = 1
@@ -318,7 +316,6 @@ class StateDelta:
     """
 
     hp: int = 0
-    stress: int = 0
     add_conditions: tuple[ActiveCondition, ...] = ()
     remove_conditions: tuple[str, ...] = ()
     add_items: tuple[str, ...] = ()
@@ -329,7 +326,6 @@ class StateDelta:
     def merge(self, other: StateDelta) -> StateDelta:
         return StateDelta(
             hp=self.hp + other.hp,
-            stress=self.stress + other.stress,
             add_conditions=self.add_conditions + other.add_conditions,
             remove_conditions=self.remove_conditions + other.remove_conditions,
             add_items=self.add_items + other.add_items,

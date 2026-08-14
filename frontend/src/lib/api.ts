@@ -73,8 +73,6 @@ export interface CharacterSheet {
   skills: Record<string, number>;
   hp: number;
   hp_max: number;
-  stress: number;
-  stress_max: number;
   conditions: { spec_id: string }[];
   inventory: string[];
   level: number;
@@ -92,6 +90,8 @@ export interface Character {
   name: string;
   controller: "player" | "ai";
   active: boolean;
+  archived_reason: "dead" | "retired" | "missing" | null;
+  epitaph: string | null;
   sheet: CharacterSheet;
   backstory: string | null;
   hooks: Hook[];
@@ -215,8 +215,13 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify(body),
       }),
-    retire: (id: string) =>
-      request<Character>(`/characters/${id}/retire`, { method: "POST" }),
+    archive: (id: string, reason: "dead" | "retired" | "missing", epitaph?: string) =>
+      request<Character>(`/characters/${id}/archive`, {
+        method: "POST",
+        body: JSON.stringify({ reason, epitaph }),
+      }),
+    restore: (id: string) =>
+      request<Character>(`/characters/${id}/restore`, { method: "POST" }),
   },
 
   sessions: {

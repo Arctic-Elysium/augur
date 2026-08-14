@@ -223,9 +223,13 @@ class ToolExecutor:
         actor = self._actor(arguments, scope)
         return ToolOutcome(
             "query_character", True,
-            {"sheet": self._engine.ruleset.describe_for_model(actor),
-             "hp": actor.hp, "hp_max": actor.hp_max,
-             "stress": actor.stress, "defeated": actor.defeated},
+            {
+                "sheet": self._engine.ruleset.describe_for_model(actor),
+                "hp": actor.hp,
+                "hp_max": actor.hp_max,
+                "conditions": [c.spec_id for c in actor.conditions],
+                "inventory": list(actor.inventory),
+            },
         )
 
     def _do_list_clocks(self, _: dict, scope: TurnScope) -> ToolOutcome:

@@ -139,7 +139,6 @@ TOOLS: tuple[ToolDefinition, ...] = (
     ),
     _tool(
         "query_character",
-        "Read a character's current sheet: attributes, skills, HP, stress, "
         "conditions, inventory. Read this before assuming any state.",
         {"actor_id": _ACTOR}, ["actor_id"], mutating=False,
     ),

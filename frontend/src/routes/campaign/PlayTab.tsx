@@ -84,8 +84,6 @@ export function PlayTab() {
                 ...c.sheet,
                 hp: live.hp,
                 hp_max: live.hp_max,
-                stress: live.stress,
-                stress_max: live.stress_max,
                 conditions: live.conditions.map((spec_id) => ({ spec_id })),
                 inventory: live.inventory,
               },

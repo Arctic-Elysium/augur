@@ -307,21 +307,34 @@ def test_apply_delta_does_not_mutate():
 
 def test_deltas_merge():
     merged = StateDelta(hp=-2, add_items=("rope",)).merge(
-        StateDelta(hp=-1, stress=1, add_items=("torch",))
+        StateDelta(hp=-1, add_items=("torch",))
     )
     assert merged.hp == -3
-    assert merged.stress == 1
     assert merged.add_items == ("rope", "torch")
 
 
-def test_partial_success_costs_stress():
+def test_partial_success_has_no_automatic_mechanical_cost():
+    """A partial costs something *concrete* that the narrator names - noise,
+    time, a broken tool. A generic counter ticking up was less interesting and
+    easy for the player to ignore."""
     ruleset = D20Ruleset()
     actor = make_character()
     result = ruleset.resolve_check(
         actor, CheckRequest(actor.id, "search", dc=13), FixedRng(8)
     )
     assert result.tier is Tier.PARTIAL
-    assert ruleset.apply_consequence(actor, result).stress == 1
+    delta = ruleset.apply_consequence(actor, result)
+    assert delta.hp == 0
+    # The obligation is carried as a note for the narrator, not as damage.
+    assert any("cost" in n for n in delta.notes)
+
+
+def test_stress_is_gone():
+    """Removed as a mechanic. Nothing should still reference it."""
+    from app.modules.rules.types import Character, StateDelta
+
+    assert not hasattr(Character(id="x", name="X", attributes={}), "stress")
+    assert "stress" not in StateDelta.__dataclass_fields__
 
 
 # ------------------------------------------------------------------ clocks
@@ -597,3 +610,28 @@ def test_legacy_attribute_names_are_migrated_on_load():
     })
     assert old.attributes["strength"] == 12
     assert old.attribute_mod("constitution") == 1
+
+
+def test_build_rules_costs_are_json_indexable():
+    """JSON has no integer keys.
+
+    A client indexing costs with String(score) against an int-keyed map misses
+    every entry, computes a spend of zero, and silently disables the create
+    button - which looks like the button being broken rather than the contract
+    being wrong.
+    """
+    import json
+
+    from app.modules.rules.systems.d20.ruleset import POINT_BUDGET
+
+    rules = D20Ruleset().build_rules()
+    costs = json.loads(json.dumps(rules))["costs"]
+
+    assert all(isinstance(k, str) for k in costs)
+    for score in range(rules["min"], rules["max"] + 1):
+        assert str(score) in costs, f"no cost published for score {score}"
+
+    # A legal spread must total exactly the budget, or the builder can never
+    # reach a completable state.
+    legal = [15, 15, 11, 10, 10, 10]
+    assert sum(costs[str(v)] for v in legal) == POINT_BUDGET

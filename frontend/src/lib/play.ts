@@ -16,8 +16,6 @@ export interface PartyMember {
   name: string;
   hp: number;
   hp_max: number;
-  stress: number;
-  stress_max: number;
   conditions: string[];
   inventory: string[];
 }

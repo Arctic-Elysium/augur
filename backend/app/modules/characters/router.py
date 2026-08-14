@@ -8,6 +8,7 @@ rejected by the system that will have to interpret it.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -19,7 +20,7 @@ from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.characters.models import Character, Controller
 from app.modules.identity.service import IdentityService
 from app.modules.characters.kit import StartingKit
-from app.modules.memory.service import MemoryService
+from app.modules.memory.service import MemoryService, make_ref
 from app.modules.rules import registry
 
 router = APIRouter()
@@ -64,6 +65,8 @@ class CharacterOut(BaseModel):
     name: str
     controller: Controller
     active: bool
+    archived_reason: str | None = None
+    epitaph: str | None = None
     sheet: dict
     backstory: str | None = None
     hooks: list[dict] = []
@@ -125,8 +128,6 @@ async def create_character(
             "skills": built.skills,
             "hp": built.hp,
             "hp_max": built.hp_max,
-            "stress": built.stress,
-            "stress_max": built.stress_max,
             "conditions": [],
             "inventory": [],
             "level": built.level,
@@ -197,15 +198,55 @@ async def update_character(
     return row
 
 
-@router.post("/{character_id}/retire", response_model=CharacterOut)
-async def retire_character(
-    character_id: uuid.UUID, db: DbDep, principal: PrincipalDep
+class ArchiveIn(BaseModel):
+    reason: Literal["dead", "retired", "missing"] = "retired"
+    epitaph: str | None = Field(default=None, max_length=1000)
+
+
+@router.post("/{character_id}/archive", response_model=CharacterOut)
+async def archive_character(
+    character_id: uuid.UUID, payload: ArchiveIn, db: DbDep, principal: PrincipalDep
 ) -> Character:
-    """Retired characters leave the party but stay for the record."""
+    """Leaves the party, stays in the record.
+
+    Never deleted: a dead character is still part of what happened, still owed
+    things, still worth avenging - and the game master needs to be able to
+    refer to them. Their canon facts stay too.
+    """
     row = await db.get(Character, character_id)
     if row is None:
         raise NotFoundError("character not found")
     await _member_campaign(db, principal, row.campaign_id)
+
     row.active = False
+    row.archived_reason = payload.reason
+    row.epitaph = payload.epitaph
+
+    # Record it, so the game master knows and can speak of it.
+    memory = MemoryService(db, row.campaign_id)
+    verb = {"dead": "died", "missing": "went missing", "retired": "left the party"}[
+        payload.reason
+    ]
+    await memory.add_fact(
+        subject_ref=make_ref("npc", row.name),
+        predicate=verb,
+        object_text=payload.epitaph or "no further detail recorded",
+    )
+
+    await db.flush()
+    return row
+
+
+@router.post("/{character_id}/restore", response_model=CharacterOut)
+async def restore_character(
+    character_id: uuid.UUID, db: DbDep, principal: PrincipalDep
+) -> Character:
+    """Undo an archive. Mis-clicking should not cost a character."""
+    row = await db.get(Character, character_id)
+    if row is None:
+        raise NotFoundError("character not found")
+    await _member_campaign(db, principal, row.campaign_id)
+    row.active = True
+    row.archived_reason = None
     await db.flush()
     return row

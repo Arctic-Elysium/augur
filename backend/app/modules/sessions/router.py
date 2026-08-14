@@ -448,7 +448,6 @@ async def take_turn(
             "party": {
                 cid: {
                     "name": c.name, "hp": c.hp, "hp_max": c.hp_max,
-                    "stress": c.stress, "stress_max": c.stress_max,
                     "conditions": [x.spec_id for x in c.conditions],
                     "inventory": list(c.inventory),
                 }
@@ -479,7 +478,7 @@ async def take_turn(
             narration=narration,
             tool_calls=outcome.tool_calls,
             deltas=[
-                {"actor_id": k, "hp": d.hp, "stress": d.stress}
+                {"actor_id": k, "hp": d.hp}
                 for k, d in outcome.deltas.items()
             ],
             prompt_version=outcome.prompt_version,

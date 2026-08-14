@@ -48,12 +48,6 @@ export function PartyRail({
                 <span className="rail__name">{c.name}</span>
               </button>
               <Meter label="Vit" now={c.sheet.hp} max={c.sheet.hp_max} />
-              <Meter
-                label="Str"
-                now={c.sheet.stress}
-                max={c.sheet.stress_max}
-                variant="stress"
-              />
               {c.sheet.conditions.length > 0 && (
                 <div className="rail__chips">
                   {c.sheet.conditions.map((x) => (
@@ -127,12 +121,10 @@ function Meter({
   label,
   now,
   max,
-  variant,
 }: {
   label: string;
   now: number;
   max: number;
-  variant?: "stress";
 }) {
   // Long health tracks get a bar; short ones get pips you can count.
   const segmented = max <= 12;
@@ -141,7 +133,7 @@ function Meter({
       <span className="label railmeter__label">{label}</span>
       {segmented ? (
         <div
-          className={`meter ${variant === "stress" ? "meter--stress" : ""}`}
+          className="meter"
           role="img"
           aria-label={`${label} ${now} of ${max}`}
         >
@@ -154,7 +146,7 @@ function Meter({
         </div>
       ) : (
         <div
-          className={`meter meter--bar ${variant === "stress" ? "meter--stress" : ""}`}
+          className="meter meter--bar"
           role="img"
           aria-label={`${label} ${now} of ${max}`}
         >

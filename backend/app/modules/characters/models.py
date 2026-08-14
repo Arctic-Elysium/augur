@@ -49,6 +49,11 @@ class Character(UUIDPrimaryKey, Timestamped, Base):
     )
     # Retired characters stay for the record but leave the party.
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Why they left. A dead character is not the same as one set aside, and the
+    # difference matters to the game master: the dead can be spoken of, owed,
+    # and avenged, while someone retired is simply elsewhere.
+    archived_reason: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    epitaph: Mapped[str | None] = mapped_column(Text, nullable=True)
     sheet: Mapped[dict] = mapped_column(JSONB, default=dict)
     # Free prose. What the player wrote about who this person is.
     backstory: Mapped[str | None] = mapped_column(Text, nullable=True)
