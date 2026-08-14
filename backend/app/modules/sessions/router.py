@@ -13,7 +13,7 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -281,6 +281,98 @@ async def list_turns(
     ]
 
 
+@router.get("/{session_id}/export")
+async def export_session(
+    session_id: uuid.UUID, db: DbDep, principal: PrincipalDep, format: str = "md"
+) -> Response:
+    """The full log, including the mechanics.
+
+    Written for reading back a session to find where the fiction drifted, which
+    means it has to show what the engine actually did alongside what the model
+    said - a transcript of only the prose hides the thing you are looking for.
+    """
+    service = SessionService(db)
+    session = await service.get(session_id)
+    campaign = await _authorize(db, principal, session.campaign_id)
+
+    result = await db.execute(
+        select(Turn).where(Turn.session_id == session_id).order_by(Turn.ordinal)
+    )
+    turns = list(result.scalars())
+
+    if format == "json":
+        return Response(
+            content=json.dumps(
+                {
+                    "campaign": campaign.name,
+                    "session": session.number,
+                    "title": session.title,
+                    "summary": session.summary,
+                    "seed": session.seed,
+                    "turns": [
+                        {
+                            "ordinal": t.ordinal,
+                            "actor_id": str(t.actor_id) if t.actor_id else None,
+                            "input": t.player_input,
+                            "narration": t.narration,
+                            "tool_calls": t.tool_calls,
+                            "deltas": t.deltas,
+                            "prompt_version": t.prompt_version,
+                            "at": t.created_at.isoformat() if t.created_at else None,
+                        }
+                        for t in turns
+                    ],
+                },
+                indent=2,
+            ),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{campaign.name}-session-{session.number}.json"'
+                )
+            },
+        )
+
+    lines = [
+        f"# {campaign.name} — Session {session.number}",
+        "",
+        f"*{session.title}*" if session.title else "",
+        # The seed makes every roll in this log reproducible, which is what
+        # turns "that felt wrong" into something checkable.
+        f"Seed `{session.seed}` · {len(turns)} turns",
+        "",
+    ]
+    for turn in turns:
+        if turn.player_input:
+            lines += [f"## Turn {turn.ordinal}", "", f"> {turn.player_input}", ""]
+        for call in turn.tool_calls or []:
+            mark = "" if call.get("ok") else "REFUSED "
+            lines.append(
+                f"`{mark}{call.get('name')}` "
+                f"`{json.dumps(call.get('arguments', {}), separators=(',', ':'))}` "
+                f"→ `{json.dumps(call.get('result', {}), separators=(',', ':'))}`"
+            )
+        if turn.tool_calls:
+            lines.append("")
+        if turn.narration:
+            lines += [turn.narration, ""]
+        if turn.prompt_version:
+            lines += [f"<sub>prompt {turn.prompt_version}</sub>", ""]
+
+    if session.summary:
+        lines += ["---", "", "## Summary", "", session.summary, ""]
+
+    return Response(
+        content="\n".join(lines),
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{campaign.name}-session-{session.number}.md"'
+            )
+        },
+    )
+
+
 @router.post("/{session_id}/turn")
 async def take_turn(
     session_id: uuid.UUID,
@@ -372,7 +464,9 @@ async def take_turn(
         # the turn still stands - losing one turn's memory is far cheaper than
         # losing the turn, and named things recur.
         extraction = await Extractor(request.app.state.ai).extract(
-            narration, session_id=str(session.id)
+            narration,
+            session_id=str(session.id),
+            known=[e.name for e in await memory.entities()],
         )
 
         await service.save_party(outcome.party_after)

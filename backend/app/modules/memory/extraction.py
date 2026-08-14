@@ -41,7 +41,13 @@ class Extractor:
     def __init__(self, ai: AIRouter) -> None:
         self._ai = ai
 
-    async def extract(self, narration: str, *, session_id: str) -> Extraction:
+    async def extract(
+        self,
+        narration: str,
+        *,
+        session_id: str,
+        known: list[str] | None = None,
+    ) -> Extraction:
         """Never raises.
 
         Extraction failing must not fail the turn - the player already has
@@ -52,7 +58,14 @@ class Extractor:
         if not narration.strip():
             return Extraction()
 
-        system, _ = render_prompt("extract_entities", passage="(see message)")
+        # Showing what already exists is the single biggest lever on duplicate
+        # entries. Without it the model names the same guard "the guard", then
+        # "cart guard", then "the gate guard" - three slugs, three rows, three
+        # separate histories for one person.
+        roster = ", ".join(sorted(known or [])[:80]) or "nothing yet"
+        system, _ = render_prompt(
+            "extract_entities", passage="(see message)", known=roster
+        )
         try:
             result = await self._ai.complete_structured(
                 CompletionRequest(

@@ -238,6 +238,9 @@ export const api = {
       }),
     remove: (id: string) =>
       request<void>(`/sessions/${id}`, { method: "DELETE" }),
+    // Not through request(): this returns a file, not JSON.
+    exportUrl: (id: string, format: "md" | "json" = "md") =>
+      `/api/sessions/${id}/export?format=${format}`,
     spotlight: (id: string, characterId: string | null) =>
       request<PlaySession>(`/sessions/${id}/spotlight`, {
         method: "POST",

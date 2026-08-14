@@ -50,9 +50,17 @@ class Settings(BaseSettings):
     ai_config_path: str = "config/ai_routing.yaml"
     anthropic_api_key: str = ""
     ai_request_timeout_seconds: int = 120
-    ai_session_token_budget: int = 500_000
+    # Augur's own circuit breaker, not the provider's. It exists to stop a
+    # runaway loop draining an account overnight, not to ration normal play.
+    #
+    # 500k was far too tight: a turn costs roughly 10-20k with the tools and
+    # system prompt, so a single evening's session hit the cap and stopped
+    # working while the account still had credit. Sized now for a long session
+    # with headroom, and it resets whenever the process does.
+    ai_session_token_budget: int = 5_000_000
 
     # --- static frontend ---
+    # Set in the image. Empty in local dev, where Vite serves the SPA itself.
     static_dir: str = ""
 
     # --- observability ---

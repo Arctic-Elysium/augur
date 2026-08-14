@@ -38,12 +38,26 @@ class TokenLedger:
         self._spent: dict[str, int] = {}
 
     def check(self, session_id: str | None) -> None:
-        if session_id and self._spent.get(session_id, 0) >= self._budget:
-            raise BudgetExceeded(f"session {session_id} exceeded token budget")
+        spent = self._spent.get(session_id or "", 0)
+        if session_id and spent >= self._budget:
+            # Say whose limit this is. "Exceeded token budget" reads like a
+            # billing problem, and the obvious response is to go and check an
+            # account that turns out to be fine.
+            raise BudgetExceeded(
+                f"this session has used {spent:,} tokens, which is Augur's own "
+                f"per-session cap of {self._budget:,} - not a provider limit. "
+                "End the session to start a fresh budget, or raise "
+                "AI_SESSION_TOKEN_BUDGET.",
+                detail={"spent": spent, "budget": self._budget},
+            )
 
     def record(self, session_id: str | None, tokens: int) -> None:
         if session_id:
             self._spent[session_id] = self._spent.get(session_id, 0) + tokens
+
+    def release(self, session_id: str) -> None:
+        """Called when a session ends, so its budget is not held forever."""
+        self._spent.pop(session_id, None)
 
     def spent(self, session_id: str) -> int:
         return self._spent.get(session_id, 0)
@@ -139,6 +153,9 @@ class AIRouter:
         ai_tokens.labels(capability, backend_used, "output").inc(
             result.usage.output_tokens
         )
+        # Tracked separately so you can see whether caching is actually
+        # working. A session where cache_read stays at zero is paying full
+        # rate for the same tool schemas on every single turn.
         ai_tokens.labels(capability, backend_used, "cache_write").inc(
             result.usage.cache_write_tokens
         )

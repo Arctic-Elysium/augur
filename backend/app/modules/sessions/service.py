@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,7 +90,12 @@ class SessionService:
         session = await self.get(session_id)
         session.status = SessionStatus.ENDED
         session.summary = summary or session.summary
-        session.ended_at = func.now()
+        # A Python datetime, not func.now(). Assigning a SQL expression leaves
+        # the attribute unresolved until the row is refreshed, and serialising
+        # the response then attempts IO outside the async context - which
+        # surfaces as MissingGreenlet from inside FastAPI's serialiser, a long
+        # way from the line that caused it.
+        session.ended_at = datetime.now(timezone.utc)
         await self._db.flush()
         return session
 

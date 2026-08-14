@@ -77,6 +77,13 @@ class MemoryService:
         )
         entity = existing.scalar_one_or_none()
 
+        # Exact ref missed, so try to fold in a near-duplicate before creating
+        # a second row. Extraction names the same person slightly differently
+        # from one scene to the next, and two rows for one guard means two
+        # histories, two sets of facts, and a codex that looks broken.
+        if entity is None:
+            entity = await self._find_similar(entity_kind, name)
+
         if entity is None:
             entity = Entity(
                 campaign_id=self._campaign_id,
@@ -102,6 +109,35 @@ class MemoryService:
 
         await self._db.flush()
         return entity
+
+    async def _find_similar(self, kind: EntityKind, name: str) -> Entity | None:
+        """Match on the distinctive part of a name, within a kind.
+
+        "the guard" and "cart guard" share `guard`; "Serel" and "Serel the
+        innkeeper" share `serel`. Deliberately conservative - merging two
+        genuinely different people is worse than leaving a duplicate, because a
+        merge cannot be undone from the UI.
+        """
+        target = slugify(name)
+        stop = {"the", "a", "an", "of", "and"}
+        words = [w for w in target.split("-") if w and w not in stop]
+        if not words:
+            return None
+
+        result = await self._db.execute(
+            select(Entity).where(
+                Entity.campaign_id == self._campaign_id, Entity.kind == kind
+            )
+        )
+        for candidate in result.scalars():
+            body = candidate.ref.split(":", 1)[-1]
+            other = [w for w in body.split("-") if w and w not in stop]
+            if not other:
+                continue
+            # One is a subsequence of the other, or they share a rare head word.
+            if set(words) <= set(other) or set(other) <= set(words):
+                return candidate
+        return None
 
     async def entities(
         self, *, known_only: bool = False, kinds: list[str] | None = None

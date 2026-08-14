@@ -130,6 +130,16 @@ export function SessionsTab() {
                         <button className="btn" onClick={() => setRenaming(s.id)}>
                           Rename
                         </button>
+                        {/* Includes the mechanics, not just the prose - drift
+                            is usually visible in what the engine did versus
+                            what the narration claimed. */}
+                        <a
+                          className="btn"
+                          href={api.sessions.exportUrl(s.id, "md")}
+                          download
+                        >
+                          Export
+                        </a>
                         {!live && (
                           <button
                             className="btn"

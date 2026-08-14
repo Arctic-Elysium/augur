@@ -162,3 +162,35 @@ async def test_in_play_entities_are_retrieved_first(memory):
     await source.preload()
     briefs = source.entities_in_play("s", "sc")
     assert briefs[0].id == "npc:serel"
+
+
+async def test_near_duplicate_names_fold_into_one_entity(memory):
+    """Extraction names the same person differently from scene to scene.
+
+    Two rows for one guard means two histories, two sets of facts, and a codex
+    that looks broken to the player.
+    """
+    await memory.upsert_entity(kind="npc", name="the guard")
+    await memory.upsert_entity(kind="npc", name="cart guard")
+    await memory.upsert_entity(kind="npc", name="the gate guard")
+    assert await memory.entity_count() == 1
+
+
+async def test_a_longer_name_folds_into_a_shorter_one(memory):
+    await memory.upsert_entity(kind="npc", name="Serel")
+    await memory.upsert_entity(kind="npc", name="Serel the innkeeper")
+    assert await memory.entity_count() == 1
+
+
+async def test_genuinely_different_people_stay_separate(memory):
+    """Merging cannot be undone from the UI, so the match must be conservative."""
+    await memory.upsert_entity(kind="npc", name="Serel")
+    await memory.upsert_entity(kind="npc", name="Karal")
+    assert await memory.entity_count() == 2
+
+
+async def test_same_name_different_kind_stays_separate(memory):
+    """A place called the Watch is not the faction called the Watch."""
+    await memory.upsert_entity(kind="faction", name="the Watch")
+    await memory.upsert_entity(kind="location", name="the Watch")
+    assert await memory.entity_count() == 2
