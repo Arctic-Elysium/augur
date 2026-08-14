@@ -16,8 +16,32 @@ from app.platform.ai.gateway import Capability, CompletionRequest, Message
 from app.platform.ai.prompts import render_prompt
 from app.platform.ai.router import AIRouter
 
-MAX_ENTITIES_PER_TURN = 6
-MAX_FACTS_PER_TURN = 6
+MAX_ENTITIES_PER_TURN = 4
+MAX_FACTS_PER_TURN = 4
+
+# Words that mark a description rather than a name. A "the" in front is the
+# single clearest signal that the model has extracted a role, not a person.
+_ARTICLES = ("the ", "a ", "an ", "some ", "another ")
+
+# Kinds where an unnamed entry is almost always scenery.
+_NAME_REQUIRED = {"npc", "faction"}
+
+
+def _is_named(name: str) -> bool:
+    """Does this read as a proper name rather than a description?
+
+    A prompt alone does not hold this line - the model will keep offering "the
+    barmaid" because she genuinely recurs. The check is mechanical: a real name
+    has a capitalised word that is not just the sentence-initial article.
+    """
+    cleaned = name.strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    if any(lowered.startswith(a) for a in _ARTICLES):
+        return False
+    # At least one capitalised word that is not a leading article.
+    return any(w[:1].isupper() for w in cleaned.split())
 
 
 class ExtractedEntity(BaseModel):
@@ -80,8 +104,22 @@ class Extractor:
         except Exception:
             return Extraction()
 
-        extraction = result.parsed if isinstance(result.parsed, Extraction) else Extraction()
-        return Extraction(
-            entities=extraction.entities[:MAX_ENTITIES_PER_TURN],
-            facts=extraction.facts[:MAX_FACTS_PER_TURN],
+        extraction = (
+            result.parsed if isinstance(result.parsed, Extraction) else Extraction()
         )
+
+        # Enforce the naming rule in code, not just in the prompt. Roles recur
+        # constantly - "the barmaid" appeared thirteen times in one session -
+        # so the model has every reason to keep offering them.
+        entities = [
+            e
+            for e in extraction.entities
+            if e.kind not in _NAME_REQUIRED or _is_named(e.name)
+        ][:MAX_ENTITIES_PER_TURN]
+
+        # Facts whose subject was filtered out have nothing to attach to.
+        kept = {e.name.lower() for e in entities}
+        facts = [f for f in extraction.facts if f.subject.lower() in kept][
+            :MAX_FACTS_PER_TURN
+        ]
+        return Extraction(entities=entities, facts=facts)

@@ -253,6 +253,24 @@ export const api = {
       request<{ entities: CodexEntity[]; unattached_facts: CodexFact[] }>(
         `/memory/codex?campaign_id=${campaignId}`,
       ),
+    updateEntity: (
+      campaignId: string,
+      ref: string,
+      body: { name?: string; kind?: string; summary?: string; known_to_players?: boolean },
+    ) =>
+      request<{ ref: string; name: string; kind: string }>(
+        `/memory/entities/${ref}?campaign_id=${campaignId}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    deleteEntity: (campaignId: string, ref: string) =>
+      request<void>(`/memory/entities/${ref}?campaign_id=${campaignId}`, {
+        method: "DELETE",
+      }),
+    mergeEntity: (campaignId: string, ref: string, intoRef: string) =>
+      request<{ ref: string; mentions: number }>(
+        `/memory/entities/${ref}/merge?campaign_id=${campaignId}`,
+        { method: "POST", body: JSON.stringify({ into_ref: intoRef }) },
+      ),
     notes: (campaignId: string) =>
       request<Note[]>(`/memory/notes?campaign_id=${campaignId}`),
     createNote: (campaignId: string, body: Partial<Note>) =>

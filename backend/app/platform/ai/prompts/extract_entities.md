@@ -1,13 +1,5 @@
-<!-- version: 3.0.0 -->
-Extract durable entities and facts from the passage below.
-
-An **entity** is a person, place, faction, item, or creature that was *named*,
-or that the player will plausibly refer to again. Give it a `kind` of one of:
-npc, location, faction, item, creature, concept.
-
-A **fact** is something the world must not later contradict: a name, a
-relationship, a property, something that happened. Break each into subject,
-predicate, object. The subject should be an entity name you also extracted.
+<!-- version: 4.0.0 -->
+Extract only entities that will still matter in three sessions.
 
 # Already on record
 
@@ -15,29 +7,50 @@ predicate, object. The subject should be an entity name you also extracted.
 
 If the passage refers to one of these, **use that exact name**. Do not coin a
 new one for someone already known - "the guard", "cart guard" and "the gate
-guard" are one person, and inventing a name per mention splits their history
-across three entries.
+guard" are one person, and a name per mention splits their history apart.
 
-Only introduce a new entity when it is genuinely new.
+# What counts
 
-Be conservative. A wrong entity is worse than a missing one - it pollutes
-retrieval and shows up in the player's codex looking like a mistake. Anything
-genuinely important will be mentioned again, and caught then.
+**npc** — only people with a *proper name*. "Aldric Vorn" yes. "the barmaid",
+"the guard", "the younger man", "a merchant" — no. An unnamed person is
+scenery until they are named; if they matter, the passage will name them.
 
-Do not extract:
-- atmosphere, weather, lighting, or mood
-- adjectives and descriptions with no named subject
-- anything the passage merely implied rather than stated
-- the player characters themselves; they are already tracked
+**location** — only places the party could deliberately return to and ask for
+by name. "The Blackstair", "the east gate" yes. "the alley", "the square",
+"the washstand", "the common room" — no. A room is not a location. Furniture
+is certainly not.
+
+**item** — only objects that are singular, plot-bearing, or belong to someone.
+"the sealed vial from Vorn's cart" yes. "bottle", "vial", "lamp", "cart",
+"box" — no. If the passage would read the same with the object replaced by
+another of its kind, it is a prop, not an entity.
+
+**faction** — only named organisations.
+
+**creature** — only named or singular creatures. "the grey horse" is a horse.
+
+# Facts
+
+Attach facts only to entities you extracted. Subject must be an entity name.
+
+# Be ruthless
+
+Most passages contain **nothing** worth recording. Returning empty arrays is
+the common, correct answer. A wrong entity is far worse than a missing one: it
+pollutes retrieval, wastes budget, and shows up in the player's codex looking
+like a mistake. Anything that genuinely matters gets mentioned again, and is
+caught then.
+
+Never extract: the player characters, atmosphere, weather, mood, body parts,
+clothing, food, furniture, generic props, or anything the passage merely
+implied.
 
 Return JSON matching this shape exactly. No preamble, no code fences.
 
 {{
-  "entities": [{{"kind": "npc", "name": "Serel", "summary": "The innkeeper at the Blackstair."}}],
-  "facts": [{{"subject": "Serel", "predicate": "works at", "object": "the Blackstair inn"}}]
+  "entities": [{{"kind": "npc", "name": "Aldric Vorn", "summary": "A carter moving sealed vials through the east gate."}}],
+  "facts": [{{"subject": "Aldric Vorn", "predicate": "moves goods through", "object": "the east gate"}}]
 }}
-
-If nothing durable was established, return empty arrays.
 
 Passage:
 {passage}

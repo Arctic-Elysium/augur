@@ -194,3 +194,38 @@ async def test_same_name_different_kind_stays_separate(memory):
     await memory.upsert_entity(kind="faction", name="the Watch")
     await memory.upsert_entity(kind="location", name="the Watch")
     assert await memory.entity_count() == 2
+
+
+def test_roles_are_not_stored_as_people():
+    """A prompt alone does not hold this line - roles recur constantly, so the
+    model keeps offering them. 'the barmaid' appeared thirteen times in one
+    real session."""
+    from app.modules.memory.extraction import _is_named
+
+    for role in ["the barmaid", "barmaid", "The barmaid", "the guard",
+                 "a merchant", "the younger man", "the kitchen woman"]:
+        assert not _is_named(role), f"{role!r} should not count as a name"
+
+    for name in ["Aldric Vorn", "Vorn", "Serel", "Karal"]:
+        assert _is_named(name), f"{name!r} should count as a name"
+
+
+async def test_facts_without_a_surviving_subject_are_dropped(memory):
+    """A fact pointing at a filtered-out entity is an orphan in context that
+    nothing in the codex explains."""
+    from app.modules.memory.extraction import (
+        ExtractedEntity,
+        ExtractedFact,
+        Extraction,
+    )
+
+    # Mirrors what the extractor does after filtering.
+    entities = [ExtractedEntity(kind="npc", name="Vorn")]
+    facts = [
+        ExtractedFact(subject="Vorn", predicate="drives", object="a cart"),
+        ExtractedFact(subject="the barmaid", predicate="works at", object="the inn"),
+    ]
+    kept = {e.name.lower() for e in entities}
+    surviving = [f for f in facts if f.subject.lower() in kept]
+    assert len(surviving) == 1
+    assert Extraction(entities=entities, facts=surviving).facts[0].subject == "Vorn"

@@ -25,12 +25,20 @@ export function CodexTab() {
   const [filter, setFilter] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [merging, setMerging] = useState<string | null>(null);
 
-  useEffect(() => {
+  const reload = () =>
     api.memory
       .codex(campaign.id)
       .then((r) => setEntities(r.entities))
       .catch((e) => setError((e as Error).message));
+
+  const run = (p: Promise<unknown>) =>
+    void p.then(reload).catch((e) => setError((e as Error).message));
+
+  useEffect(() => {
+    void reload();
   }, [campaign.id]);
 
   const present = KINDS.filter((k) => (entities ?? []).some((e) => e.kind === k));
@@ -109,6 +117,84 @@ export function CodexTab() {
                       <p className="entry-card__summary">{entity.summary}</p>
                     )}
 
+                    {expanded && editing === entity.ref && (
+                      <EditEntity
+                        entity={entity}
+                        onSave={(body) =>
+                          run(
+                            api.memory
+                              .updateEntity(campaign.id, entity.ref, body)
+                              .then(() => setEditing(null)),
+                          )
+                        }
+                        onCancel={() => setEditing(null)}
+                      />
+                    )}
+
+                    {expanded && merging === entity.ref && (
+                      <div className="entry-card__facts">
+                        <span className="field__label">Merge into</span>
+                        <p className="field__hint">
+                          Facts and mentions move across. This one is removed.
+                        </p>
+                        <div className="choices--inline">
+                          {shown
+                            .filter(
+                              (o) => o.ref !== entity.ref && o.kind === entity.kind,
+                            )
+                            .map((o) => (
+                              <button
+                                key={o.ref}
+                                className="chip"
+                                onClick={() =>
+                                  run(
+                                    api.memory
+                                      .mergeEntity(campaign.id, entity.ref, o.ref)
+                                      .then(() => setMerging(null)),
+                                  )
+                                }
+                              >
+                                {o.name}
+                              </button>
+                            ))}
+                        </div>
+                        <button className="linkish" onClick={() => setMerging(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+
+                    {expanded && (
+                      <div className="entry-card__actions">
+                        <button
+                          className="linkish"
+                          onClick={() => {
+                            setEditing(entity.ref);
+                            setMerging(null);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="linkish"
+                          onClick={() => {
+                            setMerging(entity.ref);
+                            setEditing(null);
+                          }}
+                        >
+                          Merge
+                        </button>
+                        <button
+                          className="linkish"
+                          onClick={() =>
+                            run(api.memory.deleteEntity(campaign.id, entity.ref))
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+
                     {expanded && (
                       <div className="entry-card__facts">
                         {entity.facts.length === 0 ? (
@@ -138,6 +224,84 @@ export function CodexTab() {
             </ul>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+const KIND_OPTIONS = ["npc", "location", "faction", "item", "creature", "concept"];
+
+/** Extraction is a guess, and a wrong guess is visible to the player. This is
+ *  the repair: rename it, reclassify it, or hide it from the codex while the
+ *  game master keeps knowing about it. */
+function EditEntity({
+  entity,
+  onSave,
+  onCancel,
+}: {
+  entity: CodexEntity;
+  onSave: (body: {
+    name?: string;
+    kind?: string;
+    summary?: string;
+    known_to_players?: boolean;
+  }) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(entity.name);
+  const [kind, setKind] = useState(entity.kind);
+  const [summary, setSummary] = useState(entity.summary);
+
+  return (
+    <div className="entry-card__facts">
+      <label className="field">
+        <span className="field__label">Name</span>
+        <input
+          className="field__input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+      </label>
+      <fieldset className="field">
+        <span className="field__label">Kind</span>
+        <div className="choices--inline">
+          {KIND_OPTIONS.map((k) => (
+            <button
+              key={k}
+              className={`filter ${kind === k ? "filter--on" : ""}`}
+              onClick={() => setKind(k)}
+            >
+              {k}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+      <label className="field">
+        <span className="field__label">Summary</span>
+        <textarea
+          className="field__input"
+          rows={3}
+          value={summary}
+          onChange={(e) => setSummary(e.target.value)}
+        />
+      </label>
+      <div className="actions">
+        <button
+          className="btn btn--go"
+          onClick={() => onSave({ name, kind, summary })}
+        >
+          Save
+        </button>
+        <button className="btn" onClick={onCancel}>
+          Cancel
+        </button>
+        <button
+          className="btn"
+          onClick={() => onSave({ known_to_players: false })}
+          title="Keeps it in the game master's memory, hides it from the codex"
+        >
+          Hide from codex
+        </button>
       </div>
     </div>
   );

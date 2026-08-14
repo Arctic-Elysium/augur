@@ -189,6 +189,9 @@ a:hover { color: var(--ink); text-decoration-thickness: 2px; }
 .meter__seg--on { background: var(--ink-dim); }
 .meter--stress .meter__seg { border: 1px solid rgba(232,226,212,.18); background: none; }
 .meter--stress .meter__seg--on { background: var(--ink-faint); border-color: var(--ink-faint); }
+/* Written for a <span>, but also used as a <button> in the builder - without
+   an explicit background and font a button falls back to the browser default,
+   which on a dark field is a bright white slab. */
 .chip {
   display: inline-block;
   border: 1px solid var(--rule-firm); padding: 4px 8px;
@@ -504,3 +507,4 @@ button.chip:hover { color: var(--ink); border-color: var(--rust); }
    field rather than the operating system's default control - the white slab
    that shows up is browser chrome, not a colour anyone chose. */
 button { background: none; color: inherit; font-family: inherit; }
+.entry-card__actions { display: flex; gap: 16px; padding-top: 7px; border-top: 1px solid var(--rule-soft); }
