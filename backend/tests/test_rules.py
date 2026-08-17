@@ -635,3 +635,18 @@ def test_build_rules_costs_are_json_indexable():
     # reach a completable state.
     legal = [15, 15, 11, 10, 10, 10]
     assert sum(costs[str(v)] for v in legal) == POINT_BUDGET
+
+def test_no_module_still_references_stress():
+    """A regex sweep removed `stress` but missed `stress_max`, which only
+    surfaced when a session tried to load a party - the kind of miss that hides
+    until the exact code path runs."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent / "app"
+    offenders = [
+        f"{path.relative_to(root)}:{n}"
+        for path in root.rglob("*.py")
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if "stress" in line
+    ]
+    assert not offenders, f"stress still referenced: {offenders}"
