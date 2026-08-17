@@ -132,7 +132,6 @@ class SessionService:
             skills=sheet.get("skills", {}),
             hp=sheet.get("hp", 10),
             hp_max=sheet.get("hp_max", 10),
-            stress_max=sheet.get("stress_max", 6),
             conditions=tuple(
                 ActiveCondition(**c) for c in sheet.get("conditions", [])
             ),
@@ -147,7 +146,6 @@ class SessionService:
             "skills": character.skills,
             "hp": character.hp,
             "hp_max": character.hp_max,
-            "stress_max": character.stress_max,
             "conditions": [
                 {"spec_id": c.spec_id, "remaining_ticks": c.remaining_ticks,
                  "source": c.source}
