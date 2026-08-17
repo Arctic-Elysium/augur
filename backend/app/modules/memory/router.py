@@ -17,6 +17,7 @@ from app.core.auth.deps import DbDep, PrincipalDep
 from app.core.errors import ForbiddenError, InvalidRequest, NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.identity.service import IdentityService
+from app.modules.campaigns.access import resolve_access
 from app.modules.memory.models import EntityKind, Note
 from app.modules.memory.service import MemoryService, make_ref
 
@@ -82,11 +83,15 @@ async def codex(
     secrets live in canon so the GM can run the scene, and showing them here
     would spoil the thing the player is trying to find out.
     """
-    await _authorize(db, principal, campaign_id)
+    campaign, user = await _authorize(db, principal, campaign_id)
+    access = await resolve_access(db, user.id, campaign_id)
     memory = MemoryService(db, campaign_id)
 
-    entities = await memory.entities(known_only=True)
-    facts = await memory.facts(include_secret=False)
+    # The game master sees what the world is hiding; the table does not. This
+    # is the mechanism a prepared adventure uses to keep its secrets while the
+    # GM still knows them.
+    entities = await memory.entities(known_only=not access.runs_the_game)
+    facts = await memory.facts(include_secret=access.runs_the_game)
 
     by_subject: dict[str, list[FactOut]] = {}
     for fact in facts:
@@ -140,7 +145,8 @@ async def update_entity(
     Extraction is a guess, and a wrong guess is visible to the player in the
     codex - so it has to be fixable without a database client.
     """
-    await _authorize(db, principal, campaign_id)
+    _, user = await _authorize(db, principal, campaign_id)
+    (await resolve_access(db, user.id, campaign_id)).require_gm()
     memory = MemoryService(db, campaign_id)
     entity = await memory.entity_by_ref(entity_ref)
     if entity is None:
@@ -178,7 +184,8 @@ async def delete_entity(
     Leaving the facts behind would put orphans in the model's context that
     nothing in the codex explains.
     """
-    await _authorize(db, principal, campaign_id)
+    _, user = await _authorize(db, principal, campaign_id)
+    (await resolve_access(db, user.id, campaign_id)).require_gm()
     memory = MemoryService(db, campaign_id)
     entity = await memory.entity_by_ref(entity_ref)
     if entity is None:
@@ -205,7 +212,8 @@ async def merge_entity(
     The common repair: extraction named the same person twice and their history
     is split across two entries.
     """
-    await _authorize(db, principal, campaign_id)
+    _, user = await _authorize(db, principal, campaign_id)
+    (await resolve_access(db, user.id, campaign_id)).require_gm()
     memory = MemoryService(db, campaign_id)
     source = await memory.entity_by_ref(entity_ref)
     target = await memory.entity_by_ref(payload.into_ref)

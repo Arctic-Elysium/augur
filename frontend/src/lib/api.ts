@@ -145,6 +145,25 @@ export interface CheckKind {
   lock_policy: string;
 }
 
+export type Role = "owner" | "gm" | "player" | "observer";
+
+export interface Member {
+  user_id: string;
+  role: Role;
+  display_name: string | null;
+  email: string | null;
+  is_you: boolean;
+}
+
+export interface Invite {
+  code: string;
+  role: string;
+  uses: number;
+  max_uses: number;
+  expires_at: string;
+  spent: boolean;
+}
+
 export interface CodexFact {
   subject_ref: string;
   predicate: string;
@@ -185,6 +204,27 @@ export const api = {
       }),
     remove: (id: string) =>
       request<void>(`/campaigns/${id}`, { method: "DELETE" }),
+    members: (id: string) => request<Member[]>(`/campaigns/${id}/members`),
+    invites: (id: string) => request<Invite[]>(`/campaigns/${id}/invites`),
+    createInvite: (id: string, body: { role: Role; max_uses?: number }) =>
+      request<Invite>(`/campaigns/${id}/invites`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    revokeInvite: (id: string, code: string) =>
+      request<void>(`/campaigns/${id}/invites/${code}`, { method: "DELETE" }),
+    join: (code: string) =>
+      request<Campaign>("/campaigns/join", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      }),
+    setRole: (id: string, userId: string, role: Role) =>
+      request<Member>(`/campaigns/${id}/members/${userId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ role }),
+      }),
+    removeMember: (id: string, userId: string) =>
+      request<void>(`/campaigns/${id}/members/${userId}`, { method: "DELETE" }),
   },
 
   characters: {

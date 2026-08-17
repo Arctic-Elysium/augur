@@ -15,8 +15,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.core.auth.deps import DbDep, PrincipalDep
-from app.core.errors import InvalidRequest, NotFoundError
-from app.modules.campaigns.models import Campaign, CampaignMember
+from app.core.errors import ForbiddenError, InvalidRequest, NotFoundError
+from app.modules.campaigns.access import Access, resolve_access
+from app.modules.campaigns.models import Campaign
 from app.modules.characters.models import Character, Controller
 from app.modules.identity.service import IdentityService
 from app.modules.characters.kit import StartingKit
@@ -74,19 +75,31 @@ class CharacterOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-async def _member_campaign(db, principal, campaign_id: uuid.UUID) -> Campaign:
+async def _access(db, principal, campaign_id: uuid.UUID) -> Access:
     user = await IdentityService(db).get_by_subject(principal.subject)
     if user is None:
         raise NotFoundError("campaign not found")
-    result = await db.execute(
-        select(Campaign)
-        .join(CampaignMember, CampaignMember.campaign_id == Campaign.id)
-        .where(Campaign.id == campaign_id, CampaignMember.user_id == user.id)
-    )
-    campaign = result.scalar_one_or_none()
-    if campaign is None:
-        raise NotFoundError("campaign not found")
-    return campaign
+    return await resolve_access(db, user.id, campaign_id)
+
+
+async def _member_campaign(db, principal, campaign_id: uuid.UUID) -> Campaign:
+    return (await _access(db, principal, campaign_id)).campaign
+
+
+async def _owned(db, principal, character_id: uuid.UUID) -> tuple[Character, Access]:
+    """Fetch a character the caller may modify.
+
+    Owner or game master. Without this a player could PATCH anyone's sheet by
+    guessing an id - the endpoint checked campaign membership and stopped
+    there, which is the same check for every member of the table.
+    """
+    row = await db.get(Character, character_id)
+    if row is None:
+        raise NotFoundError("character not found")
+    access = await _access(db, principal, row.campaign_id)
+    if row.owner_id != access.user_id and not access.runs_the_game:
+        raise ForbiddenError("that is not your character")
+    return row, access
 
 
 @router.post("", response_model=CharacterOut, status_code=201)
@@ -159,16 +172,53 @@ async def create_character(
     return row
 
 
+# Fields another player has no business reading. Vitals and conditions stay
+# visible - the party can see that someone is bleeding - but what is in
+# somebody's pack, what they wrote about themselves, and what they are hiding
+# are theirs.
+_PRIVATE_SHEET_KEYS = ("inventory",)
+_PRIVATE_FIELDS = ("backstory", "hooks")
+
+
+def _redact(row: Character) -> CharacterOut:
+    """A sheet as seen by someone who does not own it.
+
+    Health and conditions survive because the party can see them in the
+    fiction; a bleeding companion is not a secret. Inventory, backstory and
+    threads do not - reading another player's threads spoils the reveals they
+    were written for.
+    """
+    sheet = {k: v for k, v in row.sheet.items() if k not in _PRIVATE_SHEET_KEYS}
+    sheet["inventory"] = []
+    return CharacterOut(
+        id=row.id, campaign_id=row.campaign_id, name=row.name,
+        controller=row.controller, active=row.active,
+        archived_reason=row.archived_reason, epitaph=row.epitaph,
+        sheet=sheet, backstory=None, hooks=[],
+    )
+
+
 @router.get("", response_model=list[CharacterOut])
 async def list_characters(
     campaign_id: uuid.UUID, db: DbDep, principal: PrincipalDep
-) -> list[Character]:
-    await _member_campaign(db, principal, campaign_id)
+) -> list[CharacterOut]:
+    access = await _access(db, principal, campaign_id)
     result = await db.execute(
         select(Character).where(Character.campaign_id == campaign_id)
         .order_by(Character.created_at)
     )
-    return list(result.scalars())
+    rows = list(result.scalars())
+
+    # The game master sees everything - they have to, to run the game.
+    if access.runs_the_game:
+        return [CharacterOut.model_validate(r, from_attributes=True) for r in rows]
+
+    return [
+        CharacterOut.model_validate(r, from_attributes=True)
+        if r.owner_id == access.user_id
+        else _redact(r)
+        for r in rows
+    ]
 
 
 @router.patch("/{character_id}", response_model=CharacterOut)
@@ -178,10 +228,7 @@ async def update_character(
     db: DbDep,
     principal: PrincipalDep,
 ) -> Character:
-    row = await db.get(Character, character_id)
-    if row is None:
-        raise NotFoundError("character not found")
-    await _member_campaign(db, principal, row.campaign_id)
+    row, _ = await _owned(db, principal, character_id)
 
     if payload.name is not None:
         row.name = payload.name
@@ -213,10 +260,7 @@ async def archive_character(
     things, still worth avenging - and the game master needs to be able to
     refer to them. Their canon facts stay too.
     """
-    row = await db.get(Character, character_id)
-    if row is None:
-        raise NotFoundError("character not found")
-    await _member_campaign(db, principal, row.campaign_id)
+    row, _ = await _owned(db, principal, character_id)
 
     row.active = False
     row.archived_reason = payload.reason
@@ -242,10 +286,7 @@ async def restore_character(
     character_id: uuid.UUID, db: DbDep, principal: PrincipalDep
 ) -> Character:
     """Undo an archive. Mis-clicking should not cost a character."""
-    row = await db.get(Character, character_id)
-    if row is None:
-        raise NotFoundError("character not found")
-    await _member_campaign(db, principal, row.campaign_id)
+    row, _ = await _owned(db, principal, character_id)
     row.active = True
     row.archived_reason = None
     await db.flush()

@@ -43,7 +43,7 @@ export function Workspace() {
   // taking your hands off the composer.
   useEffect(() => {
     if (!campaignId) return;
-    const routes = ["", "party", "inventory", "journal", "codex", "sessions"];
+    const routes = ["", "party", "inventory", "journal", "codex", "table", "sessions"];
     const onKey = (e: KeyboardEvent) => {
       if (!e.altKey) return;
       const n = Number(e.key);
@@ -98,6 +98,9 @@ export function Workspace() {
               : "No session"}
           </span>
           <span className="tabbar__sep" />
+          <NavLink to={`${base}/table`} className="tab tab--page">
+            Table
+          </NavLink>
           <NavLink to={`${base}/sessions`} className="tab tab--page">
             Sessions
           </NavLink>

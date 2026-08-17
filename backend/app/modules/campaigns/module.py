@@ -12,4 +12,4 @@ class CampaignsModule:
         return router
 
     def import_models(self) -> None:
-        from app.modules.campaigns import models  # noqa: F401
+        from app.modules.campaigns import access, models  # noqa: F401

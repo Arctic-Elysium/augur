@@ -11,6 +11,7 @@ import { InventoryTab } from "./routes/campaign/InventoryTab";
 import { JournalTab } from "./routes/campaign/JournalTab";
 import { CodexTab } from "./routes/campaign/CodexTab";
 import { SessionsTab } from "./routes/campaign/SessionsTab";
+import { TableTab } from "./routes/campaign/TableTab";
 import "./styles/app.css";
 
 createRoot(document.getElementById("root")!).render(
@@ -27,6 +28,7 @@ createRoot(document.getElementById("root")!).render(
               <Route path="journal" element={<JournalTab />} />
               <Route path="codex" element={<CodexTab />} />
               <Route path="sessions" element={<SessionsTab />} />
+              <Route path="table" element={<TableTab />} />
             </Route>
           </Route>
         </Routes>

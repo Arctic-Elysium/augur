@@ -18,6 +18,18 @@ export function CampaignList() {
   const [mode, setMode] = useState<PlayMode>("solo");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<Campaign | null>(null);
+  const [joinCode, setJoinCode] = useState("");
+
+  const join = async () => {
+    if (!joinCode.trim()) return;
+    try {
+      await api.campaigns.join(joinCode.trim());
+      setJoinCode("");
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
 
   const load = () =>
     api.campaigns.list().then(setCampaigns).catch((e) => setError(e.message));
@@ -74,9 +86,23 @@ export function CampaignList() {
           </span>
         </div>
         {!creating && (
-          <button className="btn btn--go" onClick={() => setCreating(true)}>
-            New campaign
-          </button>
+          <div className="actions">
+            <input
+              className="field__input joincode"
+              value={joinCode}
+              placeholder="Invite code"
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void join();
+              }}
+            />
+            <button className="btn" onClick={() => void join()} disabled={!joinCode}>
+              Join
+            </button>
+            <button className="btn btn--go" onClick={() => setCreating(true)}>
+              New campaign
+            </button>
+          </div>
         )}
       </header>
 
