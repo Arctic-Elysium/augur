@@ -37,6 +37,7 @@ from typing import Protocol
 # Rough budget split. Tuned so a packet lands near 8k tokens regardless of
 # whether the campaign is three sessions old or three hundred.
 DEFAULT_BUDGET = {
+    "primer": 2_000,
     "canon": 1_500,
     "entities": 1_500,
     "history": 2_000,
@@ -102,6 +103,11 @@ class Exchange:
 
 @dataclass
 class ContextPacket:
+    # Player-supplied setting notes, verbatim and capped. This is how a
+    # prepared campaign - a published starter set summarised in the owner's
+    # own words - enters play without falling out of the window: it is pinned
+    # here every turn rather than trusted to a giant first prompt.
+    primer: str = ""
     canon: list[CanonFact] = field(default_factory=list)
     entities: list[EntityBrief] = field(default_factory=list)
     history: list[Summary] = field(default_factory=list)
@@ -112,6 +118,14 @@ class ContextPacket:
     def render(self) -> str:
         """The packet as it appears in the system prompt."""
         blocks: list[str] = []
+
+        if self.primer:
+            blocks.append(
+                "## The setting, as given\n"
+                "The owner of this campaign wrote this. It outranks anything "
+                "you would otherwise invent; where it is silent, invent "
+                "freely and consistently with it.\n" + self.primer
+            )
 
         if self.canon:
             facts = "\n".join(f"- {f.render()}" for f in self.canon)
@@ -174,10 +188,13 @@ class ContextBuilder:
 
     def build(
         self, source: ContextSource, session_id: str, scene_id: str,
-        *, recent_limit: int = 12,
+        *, recent_limit: int = 12, primer: str = "",
     ) -> ContextPacket:
         packet = ContextPacket()
         truncated: dict[str, int] = {}
+
+        cap = self._budget["primer"] * CHARS_PER_TOKEN
+        packet.primer = primer.strip()[:cap]
 
         packet.canon, truncated["canon"] = self._fit(
             source.canon_for_scene(session_id, scene_id),

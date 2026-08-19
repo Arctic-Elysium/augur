@@ -385,3 +385,148 @@ async def test_a_turn_that_keeps_flooding_fails_rather_than_grinding():
     loop, _ = loop_with(*[flood_response() for _ in range(MAX_TOOL_ROUNDS + 2)])
     with pytest.raises(UpstreamError):
         await loop.run(turn_input())
+
+
+# ------------------------------------------------------------ vocabularies in the schema
+#
+# Session 2 burned two extra calls per combat turn on guessed check kinds
+# ("perception", "athletics", "strength") getting refused and re-listed. The
+# vocabulary is fixed per ruleset, so it belongs in the schema as an enum -
+# an invalid call should be unrepresentable, not merely rejected.
+
+
+async def test_check_kinds_are_an_enum_in_the_tool_schema():
+    captured = {}
+
+    loop, backend = loop_with(result("Nothing happens."))
+    original = backend.complete
+
+    async def capture(request):
+        captured["tools"] = request.tools
+        return await original(request)
+
+    backend.complete = capture
+    await loop.run(turn_input())
+
+    roll = next(t for t in captured["tools"] if t.name == "roll_check")
+    kinds = roll.input_schema["properties"]["kind_id"].get("enum")
+    assert kinds, "kind_id has no enum - the model is back to guessing"
+    assert "search" in kinds
+    assert "perception" not in kinds
+
+
+async def test_prompt_states_the_check_vocabulary():
+    loop, _ = loop_with(result("Nothing happens."))
+    prompt, _ = loop._system_prompt(turn_input())
+    assert "search" in prompt
+    assert "perceive" in prompt
+
+
+# ------------------------------------------------------------ table talk
+
+
+async def test_ooc_is_fenced_in_the_player_message():
+    loop, backend = loop_with(result("Noted."))
+    captured = {}
+    original = backend.complete
+
+    async def capture(request):
+        captured["messages"] = request.messages
+        return await original(request)
+
+    backend.complete = capture
+    await loop.run(
+        turn_input(text="I open the door.", ooc="slow the pacing down a bit")
+    )
+
+    content = captured["messages"][0].content
+    assert "I open the door." in content
+    assert "OUT OF CHARACTER" in content
+    assert "slow the pacing down" in content
+
+
+async def test_ooc_only_turn_still_carries_a_message():
+    loop, backend = loop_with(result("((Understood - pacing it down.))"))
+    captured = {}
+    original = backend.complete
+
+    async def capture(request):
+        captured["messages"] = request.messages
+        return await original(request)
+
+    backend.complete = capture
+    await loop.run(turn_input(text="", ooc="can we retcon the last scene?"))
+
+    content = captured["messages"][0].content
+    assert content.startswith("((OUT OF CHARACTER")
+
+
+# ------------------------------------------------------------ provenance plumbing
+
+
+async def test_player_text_and_established_reach_the_executor_scope():
+    """The give_item gate lives in the executor; the loop must hand it what
+    the player said and what canon knows, or the gate never fires."""
+    loop, _ = loop_with(result("Nothing happens."))
+    scope = loop._scope(
+        turn_input(
+            text="I draw my atom bomb",
+            ooc="just testing",
+            established_refs=("Borveld",),
+        )
+    )
+    assert "atom bomb" in scope.player_text
+    assert "just testing" in scope.player_text
+    assert scope.established == ("Borveld",)
+
+
+# ------------------------------------------------------------ the ooc splitter
+
+
+def test_split_ooc_separates_table_talk():
+    from app.modules.sessions.router import _split_ooc
+
+    fiction, ooc = _split_ooc(
+        "I buy him a drink. ((btw, keep Borveld alive, I need him later))"
+    )
+    assert fiction == "I buy him a drink."
+    assert ooc == "btw, keep Borveld alive, I need him later"
+
+
+def test_split_ooc_leaves_unmatched_parens_alone():
+    from app.modules.sessions.router import _split_ooc
+
+    fiction, ooc = _split_ooc("I shout ((loudly at the guards")
+    assert "((" in fiction
+    assert ooc == ""
+
+
+def test_split_ooc_handles_a_message_that_is_all_table_talk():
+    from app.modules.sessions.router import _split_ooc
+
+    fiction, ooc = _split_ooc("((pause the scene - question about the rules))")
+    assert fiction == ""
+    assert ooc == "pause the scene - question about the rules"
+
+
+# ------------------------------------------------------------ the primer layer
+
+
+def test_primer_is_pinned_first_and_bounded():
+    from app.platform.ai.context import ContextBuilder, InMemoryContextSource
+
+    packet = ContextBuilder().build(
+        InMemoryContextSource(), "sess-1", "scene-1",
+        primer="The Shattered Plains. " * 2000,
+    )
+    rendered = packet.render()
+    assert rendered.startswith("## The setting, as given")
+    # primer budget is 2,000 tokens at 4 chars/token
+    assert len(packet.primer) <= 8_000
+
+
+def test_empty_primer_renders_nothing():
+    from app.platform.ai.context import ContextBuilder, InMemoryContextSource
+
+    packet = ContextBuilder().build(InMemoryContextSource(), "sess-1", "scene-1")
+    assert "The setting" not in packet.render()

@@ -15,6 +15,8 @@ export function CampaignList() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [premise, setPremise] = useState("");
+  const [primer, setPrimer] = useState("");
+  const [showPrimer, setShowPrimer] = useState(false);
   const [mode, setMode] = useState<PlayMode>("solo");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<Campaign | null>(null);
@@ -46,9 +48,12 @@ export function CampaignList() {
         name: name.trim(),
         premise: premise.trim() || undefined,
         play_mode: mode,
+        primer: primer.trim() || undefined,
       });
       setName("");
       setPremise("");
+      setPrimer("");
+      setShowPrimer(false);
       setCreating(false);
       await load();
     } catch (e) {
@@ -132,6 +137,37 @@ export function CampaignList() {
               Optional. Sets the tone Augur narrates in.
             </span>
           </label>
+
+          {!showPrimer ? (
+            <button
+              type="button"
+              className="linkish"
+              onClick={() => setShowPrimer(true)}
+            >
+              Add a setting primer — for a prepared campaign with existing lore
+            </button>
+          ) : (
+            <label className="field">
+              <span className="field__label">Setting primer</span>
+              <textarea
+                className="field__input"
+                rows={10}
+                value={primer}
+                placeholder={
+                  "The world, in your own words: places, factions, who wants what, "
+                  + "where the party starts, house rules of the setting. "
+                  + "Augur pins this into every turn - it outranks anything the "
+                  + "GM would otherwise invent."
+                }
+                onChange={(e) => setPrimer(e.target.value)}
+              />
+              <span className="field__hint">
+                Optional. For published settings, summarise in your own words
+                rather than pasting the book — a distilled primer also steers
+                better than raw pages.
+              </span>
+            </label>
+          )}
 
           <fieldset className="field">
             <legend className="field__label">Mode</legend>

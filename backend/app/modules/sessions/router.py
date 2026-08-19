@@ -9,6 +9,7 @@ emitted as they resolve, then narration streams token by token.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -115,7 +116,8 @@ async def start_session(
                 actor_id=None,
                 party=party,
                 context=ContextBuilder().build(
-                    source, str(session.id), session.scene_id
+                    source, str(session.id), session.scene_id,
+                    primer=(campaign.settings or {}).get("primer", ""),
                 ),
                 tone=(campaign.settings or {}).get("tone", "Grounded and grim."),
             )
@@ -260,7 +262,7 @@ async def end_session(
 
 @router.get("/{session_id}/turns")
 async def list_turns(
-    session_id: uuid.UUID, db: DbDep, principal: PrincipalDep, limit: int = 100
+    session_id: uuid.UUID, db: DbDep, principal: PrincipalDep, limit: int = 2000
 ) -> list[dict]:
     service = SessionService(db)
     session = await service.get(session_id)
@@ -406,17 +408,32 @@ async def take_turn(
         recent=await service.recent_exchanges(session.id),
     )
     await source.preload()
-    context = ContextBuilder().build(source, str(session.id), session.scene_id)
+    context = ContextBuilder().build(
+        source, str(session.id), session.scene_id,
+        primer=(campaign.settings or {}).get("primer", ""),
+    )
+
+    # ((double parens)) is table talk - the player addressing the GM, not the
+    # world. Stripped from the fiction here; delivered to the model as a
+    # separate channel; stored verbatim so the log shows what was said.
+    fiction, ooc = _split_ooc(payload.text)
+
+    known_entities = await memory.entities()
+    established = tuple(e.name for e in known_entities) + tuple(
+        c.name for c in party.values()
+    )
 
     turn_input = TurnInput(
         session_id=str(session.id),
         scene_id=session.scene_id,
-        text=payload.text,
+        text=fiction,
         actor_id=str(actor_id) if actor_id else None,
         party=party,
         clocks=clocks,
         context=context,
         tone=(campaign.settings or {}).get("tone", "Grounded and grim."),
+        ooc=ooc,
+        established_refs=established,
     )
 
     loop = TurnLoop(request.app.state.ai, engine)
@@ -428,6 +445,13 @@ async def take_turn(
         before the prose describing them arrives. Chosen over websockets here
         because a solo turn is one-directional; Milestone 5 adds websockets
         when multiplayer needs a bidirectional channel.
+
+        The turn is persisted and committed BEFORE the first byte streams. A
+        disconnect mid-stream used to garbage-collect this generator with the
+        turn unrecorded - dice rolled, damage dealt, check locks taken, none
+        of it durable, and a player who noticed could retry-farm a roll by
+        pulling the plug. Now the client losing the stream costs a refetch,
+        never the turn.
         """
         try:
             outcome = await loop.run(turn_input)
@@ -435,12 +459,28 @@ async def take_turn(
             yield _sse("error", {"message": str(exc)})
             return
 
+        narration = strip_repetition(outcome.narration)
+
+        await service.save_party(outcome.party_after)
+        await service.save_clocks(campaign.id, outcome.clocks)
+        await service.persist_locks(campaign.id, engine.ledger)
+        turn = await service.record_turn(
+            session,
+            actor_id=actor_id,
+            player_input=payload.text,
+            narration=narration,
+            tool_calls=outcome.tool_calls,
+            deltas=[
+                {"actor_id": k, "hp": d.hp}
+                for k, d in outcome.deltas.items()
+            ],
+            prompt_version=outcome.prompt_version,
+        )
+        await db.commit()
+
         for call in outcome.tool_calls:
             yield _sse("mechanic", call)
 
-        # Belt and braces. The turn loop already cleans this; doing it here too
-        # means a future narration path that forgets cannot write spam to disk.
-        narration = strip_repetition(outcome.narration)
         for chunk in _paragraphs(narration):
             yield _sse("narration", {"text": chunk})
 
@@ -459,29 +499,14 @@ async def take_turn(
             },
         })
 
-        # Extraction runs after the player has their narration. If it fails,
-        # the turn still stands - losing one turn's memory is far cheaper than
-        # losing the turn, and named things recur.
+        # Extraction after the turn is durable and the player has their
+        # narration. If it fails - or the client disconnects here - the turn
+        # still stands: losing one turn's memory is far cheaper than losing
+        # the turn, and named things recur.
         extraction = await Extractor(request.app.state.ai).extract(
             narration,
             session_id=str(session.id),
-            known=[e.name for e in await memory.entities()],
-        )
-
-        await service.save_party(outcome.party_after)
-        await service.save_clocks(campaign.id, outcome.clocks)
-        await service.persist_locks(campaign.id, engine.ledger)
-        turn = await service.record_turn(
-            session,
-            actor_id=actor_id,
-            player_input=payload.text,
-            narration=narration,
-            tool_calls=outcome.tool_calls,
-            deltas=[
-                {"actor_id": k, "hp": d.hp}
-                for k, d in outcome.deltas.items()
-            ],
-            prompt_version=outcome.prompt_version,
+            known=[e.name for e in known_entities],
         )
 
         for entity in extraction.entities:
@@ -512,6 +537,18 @@ async def take_turn(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _split_ooc(text: str) -> tuple[str, str]:
+    """Split ((table talk)) out of player input.
+
+    Returns (fiction, ooc). Unclosed parens are left alone - a player typing
+    "((" mid-sentence should not have half their message eaten.
+    """
+    ooc_parts = re.findall(r"\(\((.+?)\)\)", text, flags=re.DOTALL)
+    fiction = re.sub(r"\(\(.+?\)\)", "", text, flags=re.DOTALL)
+    fiction = re.sub(r"[ \t]{2,}", " ", fiction).strip()
+    return fiction, " ".join(p.strip() for p in ooc_parts)
 
 
 def _sse(event: str, data: dict) -> str:

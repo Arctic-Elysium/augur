@@ -203,8 +203,10 @@ button.chip:hover { color: var(--ink); border-color: var(--rust); }
 .rail__strip { display: none; flex-direction: column; align-items: center; padding: 14px 0; }
 
 /* ---------- panels + tables (Party / Inventory / Journal / Codex / Sessions) ---------- */
-.pane { flex: 1; min-height: 0; overflow: auto; padding: 32px 24px 90px 22px; }
-.pane__inner { max-width: var(--pane-max); }
+/* `.pane` itself is defined ONCE, further down with the pane furniture.
+   Two definitions of it in this file is the exact "two owners of one class"
+   failure the note at the top of this section of the sheet warns about - the
+   second silently won on padding and the first's survived only by accident. */
 /* 1px gaps on a rule-coloured bed = hairline grid without borders on every child */
 .grid { display: grid; gap: 1px; background: rgba(232,226,212,.1); }
 .grid > * { background: var(--field); }
@@ -265,6 +267,8 @@ button.chip:hover { color: var(--ink); border-color: var(--rust); }
 .pane__sub { color: var(--ink-mute); font-size: 13.5px; }
 
 .turn__body { min-width: 0; }
+/* ((table talk)) inside a player action - visibly a different register */
+.turn__ooc { font-family: var(--mono); font-size: .86em; color: var(--gold); opacity: .85; }
 .eventline { font: 500 10px/1.6 var(--mono); letter-spacing: .06em; color: var(--ink-ghost); text-transform: lowercase; }
 .eventline--bad { color: var(--rust); }
 

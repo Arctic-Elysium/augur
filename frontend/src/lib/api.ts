@@ -197,7 +197,13 @@ export const api = {
   campaigns: {
     list: () => request<Campaign[]>("/campaigns"),
     get: (id: string) => request<Campaign>(`/campaigns/${id}`),
-    create: (body: { name: string; premise?: string; play_mode?: PlayMode }) =>
+    create: (body: {
+      name: string;
+      premise?: string;
+      play_mode?: PlayMode;
+      primer?: string;
+      tone?: string;
+    }) =>
       request<Campaign>("/campaigns", {
         method: "POST",
         body: JSON.stringify(body),

@@ -77,14 +77,18 @@ export function toEntries(
   const push = (e: NewEntry) => entries.push({ ...e, index: index++ } as Entry);
 
   for (const turn of turns) {
-    push({
-      id: `t${turn.ordinal}-in`,
-      kind: "action",
-      // Name whoever acted. "The party" for a one-character game reads as a
-      // bug, and with several characters it hides which one is doing the thing.
-      speaker: turn.actor_id ? names[turn.actor_id] ?? "" : "The party",
-      text: turn.player_input,
-    });
+    // The opening scene is recorded with empty player input. An empty action
+    // row above it reads as a rendering bug, not a beat.
+    if (turn.player_input.trim()) {
+      push({
+        id: `t${turn.ordinal}-in`,
+        kind: "action",
+        // Name whoever acted. "The party" for a one-character game reads as a
+        // bug, and with several characters it hides which one is doing the thing.
+        speaker: turn.actor_id ? names[turn.actor_id] ?? "" : "The party",
+        text: turn.player_input,
+      });
+    }
 
     for (const [i, call] of turn.tool_calls.entries()) {
       const r = call.result as Record<string, unknown>;
@@ -176,14 +180,22 @@ function describeEvent(
   }
 }
 
-/** Scene boundaries for the jump index. Derived from narration density rather
- *  than stored, until the world module gives scenes real identity. */
-export function sceneIndex(entries: Entry[]) {
-  return entries
-    .filter((e) => e.kind === "scene")
-    .map((e) => ({
-      name: (e as { text: string }).text,
-      startIndex: e.index,
-      turnNumber: e.index,
-    }));
+/** Split player input into fiction and ((table talk)) segments for display.
+ *
+ * The backend does the authoritative split before the model sees anything;
+ * this one only styles the log so table talk reads as what it was. The two
+ * must agree on the delimiter and nothing else.
+ */
+export function splitOoc(text: string): { text: string; ooc: boolean }[] {
+  const segments: { text: string; ooc: boolean }[] = [];
+  const pattern = /\(\((.+?)\)\)/gs;
+  let cursor = 0;
+  for (const match of text.matchAll(pattern)) {
+    const at = match.index ?? 0;
+    if (at > cursor) segments.push({ text: text.slice(cursor, at), ooc: false });
+    segments.push({ text: match[1] ?? "", ooc: true });
+    cursor = at + match[0].length;
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), ooc: false });
+  return segments.length ? segments : [{ text, ooc: false }];
 }

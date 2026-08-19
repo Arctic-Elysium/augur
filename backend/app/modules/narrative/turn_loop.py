@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncIterator
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -129,6 +129,12 @@ class TurnInput:
     clocks: dict[str, Clock] = field(default_factory=dict)
     context: ContextPacket = field(default_factory=ContextPacket)
     tone: str = "Grounded and grim, but not humourless."
+    # Out-of-character text the player wrapped in ((...)). Table talk: the GM
+    # answers it, the characters never hear it, and it is never canon.
+    ooc: str = ""
+    # Names canon has on record - entities plus party members. What give_item
+    # checks player-asserted items against.
+    established_refs: tuple[str, ...] = ()
 
 
 @dataclass
@@ -192,12 +198,24 @@ class TurnLoop:
 
         return f"{block}\n\n{addressed}\n\n{rule}"
 
+    def _checks_block(self) -> str:
+        """The check vocabulary, stated in the prompt rather than discovered.
+
+        Session 2 spent two extra tool calls per combat turn on guessed kinds
+        ("perception", "athletics", "strength") getting refused and re-listed.
+        The vocabulary is fixed per ruleset; there is nothing to discover.
+        """
+        return ", ".join(
+            f"{k.id} ({k.attribute})" for k in self._engine.ruleset.check_kinds()
+        )
+
     def _system_prompt(self, turn: TurnInput) -> tuple[str, str]:
         return render_prompt(
             "gm_system",
             tone=turn.tone,
             context=turn.context.render() or "Nothing established yet.",
             party=self._party_block(turn),
+            checks=self._checks_block(),
         )
 
     def _scope(self, turn: TurnInput) -> TurnScope:
@@ -205,7 +223,26 @@ class TurnLoop:
             scene_id=turn.scene_id,
             characters=dict(turn.party),
             clocks=dict(turn.clocks),
+            player_text=f"{turn.text}\n{turn.ooc}",
+            established=turn.established_refs,
         )
+
+    def _player_message(self, turn: TurnInput) -> str:
+        """OOC rides in the same message, unmistakably fenced.
+
+        In session 2 the player italicised an aside - "*I knew an adventurer
+        named Test*" - and Borveld answered it in-fiction, because emphasis is
+        not a channel. ((double parens)) is: stripped from the fiction text
+        upstream, delivered here as table talk the GM addresses but the world
+        never hears.
+        """
+        if not turn.ooc:
+            return turn.text
+        block = (
+            "((OUT OF CHARACTER - the player is speaking to you, the GM, "
+            f"from the table: {turn.ooc}))"
+        )
+        return f"{turn.text}\n\n{block}" if turn.text else block
 
     # ------------------------------------------------------------ the loop
 
@@ -214,10 +251,19 @@ class TurnLoop:
         system, version = self._system_prompt(turn)
         scope = self._scope(turn)
 
-        messages: list[Message] = [Message(role="user", content=turn.text)]
+        messages: list[Message] = [
+            Message(role="user", content=self._player_message(turn))
+        ]
         recorded: list[dict[str, Any]] = []
         deltas: dict[str, StateDelta] = {}
         rejected = 0
+
+        specs = tool_specs(
+            check_kinds=tuple(k.id for k in self._engine.ruleset.check_kinds()),
+            condition_ids=tuple(
+                c.id for c in self._engine.ruleset.condition_specs()
+            ),
+        )
 
         for _ in range(MAX_TOOL_ROUNDS):
             result = await self._ai.complete(
@@ -225,7 +271,7 @@ class TurnLoop:
                     capability=Capability.RESOLVE_TURN,
                     system=system,
                     messages=messages,
-                    tools=tool_specs(),
+                    tools=specs,
                     session_id=turn.session_id,
                     max_tokens=MAX_NARRATION_TOKENS,
                 )
@@ -366,33 +412,4 @@ class TurnLoop:
         )
         return _strip_repetition(result.text)
 
-    # ------------------------------------------------------------ streaming
 
-    async def stream_narration(
-        self, turn: TurnInput, outcome: TurnOutcome
-    ) -> AsyncIterator[str]:
-        """Re-narrate a resolved turn as a stream.
-
-        Tool use and narration are separated on purpose. Streaming a response
-        that is still deciding to call tools produces visible stalls mid
-        sentence; resolving first and streaming the prose means the player sees
-        smooth text from the first token.
-        """
-        system, _ = self._system_prompt(turn)
-        summary = "\n".join(
-            f"- {c['name']}: {c['result']}" for c in outcome.tool_calls if c["ok"]
-        )
-        prompt = (
-            f"{turn.text}\n\n"
-            f"[Resolved mechanics - narrate these, do not re-roll]\n{summary}"
-            if summary else turn.text
-        )
-        async for chunk in self._ai.stream(
-            CompletionRequest(
-                capability=Capability.NARRATE_SCENE,
-                system=system,
-                messages=[Message(role="user", content=prompt)],
-                session_id=turn.session_id,
-            )
-        ):
-            yield chunk

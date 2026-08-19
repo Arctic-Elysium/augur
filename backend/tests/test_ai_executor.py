@@ -386,3 +386,114 @@ def test_roll_result_never_names_the_tier_to_the_narrator():
         lowered = text.lower()
         for word in banned:
             assert word.lower() not in lowered, f"{tier} guidance says '{word}'"
+
+
+# ------------------------------------------------------------ item provenance
+#
+# Session 2, turn 17: "I remember that I hold a spellbook of absolute death" -
+# and the model granted it. Five player-invented artifacts later, one of them
+# erased the town of Vareth. The gate under test: an item named by the player
+# that canon has never heard of does not enter an inventory.
+
+
+def _grant(ex, scope, item, **extra):
+    return ex.execute(
+        "give_item", {"actor_id": "pc-1", "item": item, **extra}, scope
+    )
+
+
+def test_player_invented_item_is_refused():
+    scope = scope_with(
+        character(),
+        player_text="I take out my one button atom bomb and nuke the city",
+        established=("Borveld", "Vareth", "the Bent Axle"),
+    )
+    outcome = _grant(executor(), scope, "One button atom bomb")
+    assert not outcome.ok
+    assert "self-grant" in outcome.payload["error"]
+
+
+def test_loot_from_a_canon_npc_is_granted():
+    """"Borveld's bone-handled knife" names a canon NPC. Looting is the most
+    common grant and always overlaps the player's own words - the gate must
+    key on canon, not on overlap alone."""
+    scope = scope_with(
+        character(),
+        player_text="I take Borveld's knife off his body",
+        established=("Borveld", "Vareth"),
+    )
+    outcome = _grant(executor(), scope, "Borveld's bone-handled knife")
+    assert outcome.ok
+
+
+def test_world_provided_item_without_player_mention_is_granted():
+    scope = scope_with(
+        character(),
+        player_text="I search the desk",
+        established=(),
+    )
+    outcome = _grant(executor(), scope, "a sealed letter with dark wax")
+    assert outcome.ok
+
+
+def test_established_in_scene_overrides_the_gate():
+    """The escape hatch exists for items the GM's own narration created this
+    scene, before extraction has run. The override is recorded in the turn's
+    tool calls, so abuse of it is visible in the export."""
+    scope = scope_with(
+        character(),
+        player_text="I pick up the iron key the jailer dropped",
+        established=(),
+    )
+    outcome = _grant(
+        executor(), scope, "the jailer's iron key", established_in_scene=True
+    )
+    assert outcome.ok
+
+
+def test_gate_is_inert_without_player_text():
+    """Turns that never set player_text (older callers, open_scene) must not
+    start refusing grants."""
+    outcome = _grant(executor(), scope_with(character()), "a dented tin cup")
+    assert outcome.ok
+
+
+# ------------------------------------------------------------ clock identity
+#
+# Session 2 held "nuke_detonation" (size 4, complete) and
+# "clock:nuke-detonation" (size 6, empty) at once - the model re-created its
+# own clock under a different spelling and every read after that was ambiguous.
+
+
+def test_clock_recreation_under_a_different_spelling_is_rejected():
+    existing = Clock(id="nuke_detonation", label="Detonation Countdown", size=4)
+    scope = scope_with(character(), clocks=[existing])
+    outcome = executor().execute(
+        "create_clock",
+        {"clock_id": "clock:nuke-detonation", "label": "Nuke goes off", "size": 6},
+        scope,
+    )
+    assert not outcome.ok
+    assert "nuke_detonation" in outcome.payload["hint"]
+
+
+def test_clock_recreation_under_the_same_label_is_rejected():
+    existing = Clock(id="pursuit", label="The Guards Close In", size=6)
+    scope = scope_with(character(), clocks=[existing])
+    outcome = executor().execute(
+        "create_clock",
+        {"clock_id": "guards_closing", "label": "the guards close in", "size": 4},
+        scope,
+    )
+    assert not outcome.ok
+
+
+def test_distinct_clocks_still_coexist():
+    existing = Clock(id="pursuit", label="The Guards Close In", size=6)
+    scope = scope_with(character(), clocks=[existing])
+    outcome = executor().execute(
+        "create_clock",
+        {"clock_id": "ritual", "label": "The Ritual Completes", "size": 8},
+        scope,
+    )
+    assert outcome.ok

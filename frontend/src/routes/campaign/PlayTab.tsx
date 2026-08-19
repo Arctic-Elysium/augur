@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Component, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import { api, type CheckKind } from "../../lib/api";
-import { toEntries, type Entry, type NewEntry } from "../../lib/log";
+import { splitOoc, toEntries, type Entry, type NewEntry } from "../../lib/log";
 import { takeTurn, type ClockState, type PartyMember } from "../../lib/play";
 import { estimateTurn, useWindowedLog } from "../../hooks/useWindowedLog";
 import { DiceReadout } from "./DiceReadout";
@@ -12,6 +13,15 @@ import type { WorkspaceContext } from "./Workspace";
  *  and mounting hundreds of rows makes the page unusable before anyone can
  *  stop it. The server caps this too - this is the last line. */
 const MAX_NARRATION_PARAGRAPHS = 12;
+
+/** Turns in flight, keyed by session id, OUTSIDE React.
+ *
+ * Flipping to Inventory mid-turn unmounts this component. The stream keeps
+ * running in its closure, the server persists the turn - and the remounted
+ * tab, having refetched before the turn landed, shows a log that ate your
+ *  message until you refresh. The registry lets a fresh mount notice the
+ * in-flight turn, wait it out, and refetch once it is durable. */
+const turnsInFlight = new Map<string, Promise<void>>();
 
 export function PlayTab() {
   const { campaign, characters, sessions, activeSession, reload } =
@@ -40,6 +50,11 @@ export function PlayTab() {
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const narrationCount = useRef(0);
+  // Live entries need unique ids. Deriving them through toEntries gave every
+  // mechanic in a turn the same `t0-r0`, and duplicate React keys under a
+  // windowed list is exactly the scroll-duplication and blank-screen failure:
+  // the reconciler matches the wrong rows when the window shifts, then throws.
+  const liveSeq = useRef(0);
 
   const {
     visible, startIndex, padTop, padBottom,
@@ -61,13 +76,23 @@ export function PlayTab() {
 
   useEffect(() => {
     if (!session) return;
-    void api.sessions
-      .turns(session.id)
-      .then((turns) => {
-        setEntries(toEntries(turns, kinds, names));
-        requestAnimationFrame(toLatest);
-      })
-      .catch(() => {});
+    const id = session.id;
+    let stale = false;
+    const load = async () => {
+      const pending = turnsInFlight.get(id);
+      if (pending) {
+        setBusy(true);
+        await pending.catch(() => {});
+        if (stale) return;
+        setBusy(false);
+      }
+      const turns = await api.sessions.turns(id);
+      if (stale) return;
+      setEntries(toEntries(turns, kinds, names));
+      requestAnimationFrame(toLatest);
+    };
+    void load().catch(() => {});
+    return () => { stale = true; };
   }, [session?.id, kinds.length, roster.length]);
 
 
@@ -111,18 +136,19 @@ export function PlayTab() {
   const send = async () => {
     const text = input.trim();
     if (!text || busy || !session) return;
+    const id = session.id;
     setInput("");
     setBusy(true);
     narrationCount.current = 0;
     append({
-      id: `live-${Date.now()}`,
+      id: `live-${liveSeq.current++}`,
       kind: "action",
       speaker: effectiveActor ? names[effectiveActor] ?? "" : "The party",
       text,
     });
     requestAnimationFrame(toLatest);
 
-    await takeTurn(session.id, text, effectiveActor, {
+    const flight = takeTurn(id, text, effectiveActor, {
       onMechanic: (m) => {
         toEntries(
           [{ ordinal: 0, actor_id: null, player_input: "", narration: "", tool_calls: [m] }],
@@ -130,7 +156,9 @@ export function PlayTab() {
           names,
         )
           .filter((e) => e.kind !== "action")
-          .forEach((e) => append(e));
+          // Re-id: toEntries stamps every live mechanic `t0-r0`, and duplicate
+          // keys under a windowed list is the scroll-duplication bug.
+          .forEach((e) => append({ ...e, id: `live-${liveSeq.current++}` }));
         if (!atBottom) setUnread((n) => n + 1);
       },
       onNarration: (t) => {
@@ -139,15 +167,34 @@ export function PlayTab() {
         // hundreds of rows before anyone could stop it.
         narrationCount.current += 1;
         if (narrationCount.current > MAX_NARRATION_PARAGRAPHS) return;
-        append({ id: `live-n-${Date.now()}-${narrationCount.current}`, kind: "narration", text: t });
+        append({ id: `live-${liveSeq.current++}`, kind: "narration", text: t });
       },
       onState: (s) => {
         setParty(s.party);
         setClocks(s.clocks);
       },
-      onError: (m) => append({ id: `live-e-${Date.now()}`, kind: "event", text: m, bad: true }),
+      onError: (m) =>
+        append({ id: `live-${liveSeq.current++}`, kind: "event", text: m, bad: true }),
       onDone: () => setBusy(false),
     });
+
+    turnsInFlight.set(id, flight);
+    try {
+      await flight;
+    } finally {
+      turnsInFlight.delete(id);
+    }
+
+    // Reconcile with the durable log. The live entries were streamed guesses;
+    // the server's rows are the truth, with canonical ids - swapping them in
+    // clears any accumulated live state instead of letting it rot for a
+    // whole session.
+    try {
+      const turns = await api.sessions.turns(id);
+      setEntries(toEntries(turns, kinds, names));
+    } catch {
+      /* keep the live entries; the next mount refetches */
+    }
     setBusy(false);
     if (atBottom) requestAnimationFrame(toLatest);
   };
@@ -217,26 +264,28 @@ export function PlayTab() {
         </div>
 
         <div className="play__mid">
-          <div
-            className="log"
-            ref={logRef}
-            onScroll={onScroll}
-            tabIndex={0}
-            aria-label="Session log"
-          >
-            <div className="log__pad" style={{ height: padTop }} />
-            <div className="log__inner">
-              {entries.length === 0 && (
-                <p className="empty">
-                  Say what you do. Augur reads the signs from there.
-                </p>
-              )}
-              {visible.map((entry, i) => (
-                <LogRow key={entry.id} entry={entry} index={startIndex + i} />
-              ))}
+          <LogBoundary>
+            <div
+              className="log"
+              ref={logRef}
+              onScroll={onScroll}
+              tabIndex={0}
+              aria-label="Session log"
+            >
+              <div className="log__pad" style={{ height: padTop }} />
+              <div className="log__inner">
+                {entries.length === 0 && (
+                  <p className="empty">
+                    Say what you do. Augur reads the signs from there.
+                  </p>
+                )}
+                {visible.map((entry, i) => (
+                  <LogRow key={entry.id} entry={entry} index={startIndex + i} />
+                ))}
+              </div>
+              <div className="log__pad" style={{ height: padBottom }} />
             </div>
-            <div className="log__pad" style={{ height: padBottom }} />
-          </div>
+          </LogBoundary>
 
           {showScenes && scenes.length > 3 && (
             <nav className="scenes" aria-label="Jump to a moment">
@@ -316,7 +365,7 @@ export function PlayTab() {
 function LogRow({ entry, index }: { entry: Entry; index: number }) {
   return (
     <div className="turn" data-turn-index={index}>
-      <div className="turn__time">{entry.kind === "roll" ? "" : ""}</div>
+      <div className="turn__time" />
       <div className="turn__body">
         {entry.kind === "scene" && (
           <div className="turn__scene">
@@ -327,7 +376,17 @@ function LogRow({ entry, index }: { entry: Entry; index: number }) {
         {entry.kind === "action" && (
           <>
             {entry.speaker && <span className="label label--lit">{entry.speaker}</span>}
-            <p className="turn__action">{entry.text}</p>
+            <p className="turn__action">
+              {splitOoc(entry.text).map((seg, i) =>
+                seg.ooc ? (
+                  <span key={i} className="turn__ooc" title="Out of character">
+                    (({seg.text}))
+                  </span>
+                ) : (
+                  <span key={i}>{seg.text}</span>
+                ),
+              )}
+            </p>
           </>
         )}
         {entry.kind === "narration" && <p className="turn__prose">{entry.text}</p>}
@@ -340,4 +399,40 @@ function LogRow({ entry, index }: { entry: Entry; index: number }) {
       </div>
     </div>
   );
+}
+
+/** A render fault in one log row must cost the log, not the app.
+ *
+ * The blank-screen-until-refresh failure was a thrown reconciliation error
+ * unmounting the whole tree because nothing caught it. The duplicate-key bug
+ * that threw it is fixed; this is the backstop for whatever throws next. */
+class LogBoundary extends Component<
+  { children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="log">
+          <p className="notice notice--bad">
+            The log hit a rendering fault.{" "}
+            <button
+              className="linkish"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>{" "}
+            to pick the session back up — nothing was lost.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }

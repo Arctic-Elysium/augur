@@ -13,6 +13,7 @@ forbid.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,6 +57,11 @@ class TurnScope:
     # which is the Milestone 3 state; Milestone 4 populates it from the scene.
     known_targets: tuple[str, ...] = ()
     situation: Situation | None = None
+    # What the player typed this turn, and the names of everything canon knows.
+    # Together these let give_item tell world-provided loot from a player
+    # retconning "the spellbook of absolute death" into their own pack.
+    player_text: str = ""
+    established: tuple[str, ...] = ()
 
     def situation_for(self, actor: Character) -> Situation:
         if self.situation is not None:
@@ -394,10 +400,45 @@ class ToolExecutor:
         item = (arguments.get("item") or "").strip()
         if not item:
             raise ToolRejection("item must not be empty")
+        if self._player_asserted(item, scope) and not arguments.get(
+            "established_in_scene"
+        ):
+            raise ToolRejection(
+                f"'{item}' was named by the player, not established in the "
+                "fiction - players cannot self-grant items",
+                "The sheet is the truth. Narrate that they do not have it. "
+                "Only if YOU established this exact item in the fiction "
+                "before this turn, re-call with established_in_scene=true; "
+                "never do so for an item the player invented.",
+            )
         return ToolOutcome(
             "give_item", True, {"actor_id": actor.id, "item": item},
             delta=StateDelta(add_items=(item,)), actor_id=actor.id,
         )
+
+    @staticmethod
+    def _player_asserted(item: str, scope: TurnScope) -> bool:
+        """Did this item's name come from the player's own message?
+
+        True when a distinctive word of the item appears in the player's input
+        and no word of it matches anything canon has on record. "Borveld's
+        bone-handled knife" passes because Borveld is canon; "one button atom
+        bomb" fails because the only place it exists is the message asking for
+        it. Session 2 accumulated five player-invented artifacts of absolute
+        death this way, one of which erased the town of Vareth.
+        """
+        words = {
+            w for w in re.findall(r"[a-z]{4,}", item.lower())
+        }
+        if not words:
+            return False
+        player = set(re.findall(r"[a-z]{4,}", scope.player_text.lower()))
+        if not words & player:
+            return False
+        known = set()
+        for name in scope.established:
+            known |= set(re.findall(r"[a-z]{4,}", name.lower()))
+        return not (words & known)
 
     def _do_take_item(self, arguments: dict, scope: TurnScope) -> ToolOutcome:
         actor = self._actor(arguments, scope)
@@ -414,8 +455,28 @@ class ToolExecutor:
 
     # -------------------------------------------------------------- clocks
 
+    @staticmethod
+    def _normalize_clock(text: str) -> str:
+        """`nuke_detonation`, `clock:nuke-detonation` and `Nuke Detonation`
+        are one clock. Session 2 held two nuke clocks at once - one complete,
+        one empty - because the model re-created its own clock under a
+        different spelling and every read after that was ambiguous."""
+        text = re.sub(r"^clock:", "", text.strip().lower())
+        return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
     def _do_create_clock(self, arguments: dict, scope: TurnScope) -> ToolOutcome:
         clock_id = arguments.get("clock_id")
+        wanted = self._normalize_clock(str(clock_id or ""))
+        wanted_label = self._normalize_clock(str(arguments.get("label") or ""))
+        for existing in scope.clocks.values():
+            if (
+                self._normalize_clock(existing.id) == wanted
+                or (wanted_label and self._normalize_clock(existing.label) == wanted_label)
+            ):
+                raise ToolRejection(
+                    f"clock '{clock_id}' already exists as '{existing.id}'",
+                    f"Use advance_clock with clock_id '{existing.id}'.",
+                )
         if clock_id in scope.clocks:
             raise ToolRejection(
                 f"clock '{clock_id}' already exists",

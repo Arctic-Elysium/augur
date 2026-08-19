@@ -215,8 +215,22 @@ TOOLS: tuple[ToolDefinition, ...] = (
     ),
     _tool(
         "give_item",
-        "Add an item to a character's inventory.",
-        {"actor_id": _ACTOR, "item": {"type": "string"}},
+        "Add an item to a character's inventory. Only for items the WORLD "
+        "provides - loot, purchases, gifts, things established in the fiction. "
+        "A player declaring an item they were never given is a retcon: refuse "
+        "it in narration, never grant it.",
+        {
+            "actor_id": _ACTOR,
+            "item": {"type": "string"},
+            "established_in_scene": {
+                "type": "boolean",
+                "description": (
+                    "Set true ONLY if you, the GM, established this item in "
+                    "the fiction before this turn. Never set it for an item "
+                    "the player invented in their own message."
+                ),
+            },
+        },
         ["actor_id", "item"], mutating=True,
     ),
     _tool(
@@ -257,8 +271,40 @@ TOOLS: tuple[ToolDefinition, ...] = (
 TOOLS_BY_NAME = {t.spec.name: t for t in TOOLS}
 
 
-def tool_specs() -> tuple[ToolSpec, ...]:
-    return tuple(t.spec for t in TOOLS)
+def tool_specs(
+    check_kinds: tuple[str, ...] = (),
+    condition_ids: tuple[str, ...] = (),
+) -> tuple[ToolSpec, ...]:
+    """Tool specs, with ruleset vocabularies baked into the schema as enums.
+
+    With `kind_id` as a bare string the model guesses ("perception",
+    "athletics", "strength") and burns two extra calls per rejection - a
+    list_available_checks round trip on every combat turn of session 2's
+    transcript. An enum makes the invalid call unrepresentable. The vocabulary
+    is fixed per ruleset, so prompt caching on the tools prefix still holds.
+    """
+    if not check_kinds and not condition_ids:
+        return tuple(t.spec for t in TOOLS)
+
+    specs: list[ToolSpec] = []
+    for tool in TOOLS:
+        spec = tool.spec
+        schema = spec.input_schema
+        target: str | None = None
+        values: tuple[str, ...] = ()
+        if spec.name == "roll_check" and check_kinds:
+            target, values = "kind_id", check_kinds
+        elif spec.name in ("add_condition", "remove_condition") and condition_ids:
+            target, values = "condition_id", condition_ids
+        if target:
+            props = dict(schema["properties"])
+            props[target] = {**props[target], "enum": list(values)}
+            schema = {**schema, "properties": props}
+            spec = ToolSpec(
+                name=spec.name, description=spec.description, input_schema=schema
+            )
+        specs.append(spec)
+    return tuple(specs)
 
 
 def resolve_dc(difficulty: Difficulty, factors: tuple[SituationalFactor, ...]) -> tuple[int, int]:

@@ -24,6 +24,7 @@ from app.modules.campaigns.models import (
 )
 from app.modules.identity.models import User
 from app.modules.identity.service import IdentityService
+from app.modules.rules import registry
 
 router = APIRouter()
 
@@ -32,7 +33,18 @@ class CampaignCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     premise: str | None = None
     play_mode: PlayMode = PlayMode.SOLO
-    ruleset_id: str = "core"
+    # 'core' was the Milestone 0 placeholder this field used to default to.
+    # Migration 0007 repaired the rows it produced - and then every new
+    # campaign recreated the bug, because the repair fixed the data and not
+    # the default. The default is now the real system, and creation validates
+    # against the registry so an unknown ruleset dies here as a 422 instead of
+    # surfacing later as a character-creation failure three screens away.
+    ruleset_id: str = "d20"
+    # Setting notes for a prepared campaign - a starter set summarised in the
+    # owner's own words, house lore, an ongoing world. Pinned into every
+    # turn's context, capped by the builder's primer budget.
+    primer: str | None = Field(default=None, max_length=60_000)
+    tone: str | None = Field(default=None, max_length=400)
 
 
 class CampaignOut(BaseModel):
@@ -49,13 +61,20 @@ class CampaignOut(BaseModel):
 async def create_campaign(
     payload: CampaignCreate, db: DbDep, principal: PrincipalDep
 ) -> Campaign:
+    registry.get(payload.ruleset_id)  # raises InvalidRequest for an unknown id
     user = await IdentityService(db).upsert_from_principal(principal)
+    settings: dict = {}
+    if payload.primer and payload.primer.strip():
+        settings["primer"] = payload.primer.strip()
+    if payload.tone and payload.tone.strip():
+        settings["tone"] = payload.tone.strip()
     campaign = Campaign(
         owner_id=user.id,
         name=payload.name,
         premise=payload.premise,
         play_mode=payload.play_mode,
         ruleset_id=payload.ruleset_id,
+        settings=settings,
     )
     db.add(campaign)
     await db.flush()

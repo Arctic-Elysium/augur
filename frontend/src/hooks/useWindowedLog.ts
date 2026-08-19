@@ -38,10 +38,17 @@ export function useWindowedLog<T>(
     prefix.current = p;
   }, []);
 
-  // grow (append-only log) or reset (different session loaded)
+  // grow (append-only log) or reset (different session loaded, or the live
+  // entries were reconciled against the durable log)
   if (heights.current.length !== turns.length) {
-    if (heights.current.length > turns.length) heights.current = turns.map(estimate);
-    else for (let i = heights.current.length; i < turns.length; i++) heights.current.push(estimate(turns[i]!));
+    if (heights.current.length > turns.length) {
+      heights.current = turns.map(estimate);
+      // The old window can point past the end of the new array; left alone it
+      // renders an empty log until the next scroll event resyncs it.
+      setWin({ start: Math.max(0, turns.length - 60), end: turns.length });
+    } else {
+      for (let i = heights.current.length; i < turns.length; i++) heights.current.push(estimate(turns[i]!));
+    }
     rebuild();
   }
 
