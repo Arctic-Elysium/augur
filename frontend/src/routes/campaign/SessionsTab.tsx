@@ -228,6 +228,26 @@ function RenameField({
   );
 }
 
+/** How hard the world pushes toward the destination. */
+type Pressure = "off" | "light" | "firm";
+
+const PRESSURE_OPTIONS: ReadonlyArray<{
+  value: Pressure;
+  label: string;
+  note: string;
+}> = [
+  { value: "off", label: "Off", note: "No steering at all." },
+  {
+    value: "light",
+    label: "Light",
+    note: "Opportunities appear. Ignoring them works.",
+  },
+  {
+    value: "firm",
+    label: "Firm",
+    note: "The world converges. They choose how, not whether.",
+  },
+];
 
 /** Where this session should end up, and how hard the world pushes.
 
@@ -243,7 +263,7 @@ function Destination({
   onSaved: () => Promise<void> | void;
 }) {
   const [text, setText] = useState(session.destination ?? "");
-  const [pressure, setPressure] = useState(session.pressure ?? "light");
+  const [pressure, setPressure] = useState<Pressure>(session.pressure ?? "light");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -255,7 +275,7 @@ function Destination({
     try {
       await api.sessions.setDestination(session.id, {
         destination: text,
-        pressure: pressure as "off" | "light" | "firm",
+        pressure,
       });
       setSaved(true);
       await onSaved();
@@ -288,11 +308,7 @@ function Destination({
       </label>
 
       <div className="dest__pressure">
-        {[
-          ["off", "Off", "No steering at all."],
-          ["light", "Light", "Opportunities appear. Ignoring them works."],
-          ["firm", "Firm", "The world converges. They choose how, not whether."],
-        ].map(([value, label, note]) => (
+        {PRESSURE_OPTIONS.map(({ value, label, note }) => (
           <button
             key={value}
             type="button"
