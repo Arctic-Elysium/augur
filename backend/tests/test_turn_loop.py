@@ -530,3 +530,128 @@ def test_empty_primer_renders_nothing():
 
     packet = ContextBuilder().build(InMemoryContextSource(), "sess-1", "scene-1")
     assert "The setting" not in packet.render()
+
+
+# ------------------------------------------------------------ destination
+#
+# The GM prepares where the evening should land; the model improvises the
+# route. This is the strongest single lever on drift, and the failure mode it
+# has to avoid is railroading - so the prompt has to carry both the target and
+# the licence to miss it.
+
+
+def _packet(**kwargs):
+    from app.platform.ai.context import ContextBuilder, InMemoryContextSource
+
+    return ContextBuilder().build(
+        InMemoryContextSource(), "sess-1", "scene-1", **kwargs
+    )
+
+
+def test_destination_reaches_the_prompt_with_its_licence_to_miss():
+    rendered = _packet(
+        destination="They end the night owing the magistrate a favour.",
+    ).render()
+    assert "owing the magistrate" in rendered
+    assert "not a script" in rendered
+    assert "railroading" in rendered
+
+
+def test_pressure_off_suppresses_steering_entirely():
+    rendered = _packet(destination="Somewhere specific.", pressure="off").render()
+    assert "Somewhere specific." not in rendered
+
+
+def test_firm_and_light_steer_differently():
+    light = _packet(destination="X", pressure="light").render()
+    firm = _packet(destination="X", pressure="firm").render()
+    assert "let them be ignored" in light
+    assert "converging" in firm
+
+
+def test_directives_render_last_and_claim_precedence():
+    rendered = _packet(
+        destination="X",
+        directives=["Borveld is dead - never voice him."],
+    ).render()
+    assert "never voice him" in rendered
+    assert rendered.index("Standing corrections") > rendered.index("Where this session")
+    assert "override anything else" in rendered
+
+
+def test_directives_are_kept_from_the_newest_end():
+    """A correction written thirty seconds ago outranks one from session two,
+    which the campaign has probably moved past."""
+    packet = _packet(directives=["oldest", *[f"filler {i}" * 200 for i in range(40)]])
+    assert "oldest" not in packet.directives
+
+
+def test_superseded_facts_render_as_history_not_canon():
+    from app.platform.ai.context import CanonFact, ContextPacket
+
+    rendered = ContextPacket(
+        canon=[CanonFact("Borveld", "is", "a lich")],
+        superseded=[CanonFact("Borveld", "runs", "the Bent Axle", superseded_at=4)],
+    ).render()
+    assert "No longer true" in rendered
+    assert "until session 4" in rendered
+    # The distinction that stops the pair reading as a contradiction.
+    assert rendered.index("Established facts") < rendered.index("No longer true")
+
+
+# ------------------------------------------------------------ pacing
+
+
+def test_pacing_note_reads_a_bound_clock():
+    from app.modules.rules.types import Clock
+    from app.modules.sessions.router import _pacing_note
+
+    class S:
+        destination_clock_id = "closing"
+
+    clocks = {"closing": Clock(id="closing", label="Closing", size=8, filled=7)}
+    assert "Converge" in _pacing_note(S(), clocks)
+
+    clocks = {"closing": Clock(id="closing", label="Closing", size=8, filled=1)}
+    assert "Early" in _pacing_note(S(), clocks)
+
+
+def test_pacing_note_is_silent_without_a_bound_clock():
+    from app.modules.sessions.router import _pacing_note
+
+    class S:
+        destination_clock_id = None
+
+    assert _pacing_note(S(), {}) == ""
+
+
+# ------------------------------------------------------- player item grants
+
+
+def test_player_grants_are_allowed_by_default():
+    """The gate still exists and still detects correctly; it is simply off,
+    because with a human approving durable writes this is taste rather than
+    safety."""
+    loop, _ = loop_with(result("Nothing happens."))
+    scope = loop._scope(turn_input(text="I draw my one button atom bomb"))
+    assert scope.allow_player_grants is True
+
+
+def test_gate_still_refuses_when_a_campaign_turns_it_on():
+    from app.modules.rules.engine import RulesEngine
+    from app.modules.rules.locking import CheckLedger
+    from app.platform.ai.executor import ToolExecutor, TurnScope
+    from app.modules.rules.systems.d20.ruleset import D20Ruleset
+
+    character = pc("pc-1", "Vessa")
+    scope = TurnScope(
+        scene_id="s", characters={"pc-1": character},
+        player_text="I take out my one button atom bomb",
+        established=("Borveld",),
+        allow_player_grants=False,
+    )
+    executor = ToolExecutor(RulesEngine(ledger=CheckLedger(), rng=Scripted()))
+    outcome = executor.execute(
+        "give_item", {"actor_id": "pc-1", "item": "One button atom bomb"}, scope
+    )
+    assert not outcome.ok

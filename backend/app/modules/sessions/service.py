@@ -210,6 +210,7 @@ class SessionService:
         tool_calls: list,
         deltas: list,
         prompt_version: str,
+        prompt_debug: dict | None = None,
     ) -> Turn:
         turn = Turn(
             session_id=session.id,
@@ -221,6 +222,7 @@ class SessionService:
             deltas=deltas,
             scene_id=session.scene_id,
             prompt_version=prompt_version,
+            prompt_debug=prompt_debug,
         )
         self._db.add(turn)
         await self._db.flush()

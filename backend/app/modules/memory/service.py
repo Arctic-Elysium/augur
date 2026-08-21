@@ -17,6 +17,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.memory.models import (
+    EntryStatus,
     CanonFact,
     Entity,
     EntityKind,
@@ -61,9 +62,16 @@ class MemoryService:
         state: dict | None = None,
         session_number: int | None = None,
         known_to_players: bool = True,
+        status: EntryStatus = EntryStatus.PROPOSED,
     ) -> Entity:
         """Create or refresh. Idempotent on ref, so the same NPC mentioned in
-        five scenes is one row with five mentions rather than five rows."""
+        five scenes is one row with five mentions rather than five rows.
+
+        Extraction calls this with the default PROPOSED status: nothing the
+        model writes reaches canon until a human accepts it. Re-mentioning an
+        already-accepted entity must never demote it back to the queue, so
+        status only ever moves forward here.
+        """
         try:
             entity_kind = EntityKind(kind)
         except ValueError:
@@ -94,6 +102,8 @@ class MemoryService:
                 state=state or {},
                 first_seen_session=session_number,
                 known_to_players=known_to_players,
+                status=status,
+                proposed_in_session=session_number,
             )
             self._db.add(entity)
         else:
@@ -106,6 +116,11 @@ class MemoryService:
                 entity.state = {**entity.state, **state}
             if known_to_players:
                 entity.known_to_players = True
+            # Forward only. An accepted entity being mentioned again is not a
+            # new proposal, and dropping it back into the queue every time it
+            # recurs would make the queue unusable within one session.
+            if status is EntryStatus.ACCEPTED:
+                entity.status = EntryStatus.ACCEPTED
 
         await self._db.flush()
         return entity
@@ -140,11 +155,24 @@ class MemoryService:
         return None
 
     async def entities(
-        self, *, known_only: bool = False, kinds: list[str] | None = None
+        self,
+        *,
+        known_only: bool = False,
+        kinds: list[str] | None = None,
+        status: EntryStatus | None = EntryStatus.ACCEPTED,
     ) -> list[Entity]:
+        """Accepted entries only, by default.
+
+        The default matters more than it looks: this is what the context
+        source and the extractor's roster both call, so a proposed entry is
+        invisible to the model until a human accepts it. Pass status=None to
+        see everything, which is what the review queue does.
+        """
         query = select(Entity).where(Entity.campaign_id == self._campaign_id)
         if known_only:
             query = query.where(Entity.known_to_players.is_(True))
+        if status is not None:
+            query = query.where(Entity.status == status)
         if kinds:
             query = query.where(Entity.kind.in_([EntityKind(k) for k in kinds]))
         result = await self._db.execute(
@@ -193,6 +221,7 @@ class MemoryService:
         session_number: int | None = None,
         turn_id: uuid.UUID | None = None,
         secret: bool = False,
+        status: EntryStatus = EntryStatus.PROPOSED,
     ) -> CanonFact | None:
         """Record a claim. Returns None if it is already on record."""
         duplicate = await self._db.execute(
@@ -215,18 +244,35 @@ class MemoryService:
             session_number=session_number,
             source_turn_id=turn_id,
             secret=secret,
+            status=status,
         )
         self._db.add(fact)
         await self._db.flush()
         return fact
 
     async def facts(
-        self, *, subject_refs: list[str] | None = None, include_secret: bool = True
+        self,
+        *,
+        subject_refs: list[str] | None = None,
+        include_secret: bool = True,
+        status: EntryStatus | None = EntryStatus.ACCEPTED,
+        include_superseded: bool = False,
     ) -> list[CanonFact]:
+        """Current, accepted facts by default.
+
+        Superseded facts are excluded from the default read because they are
+        no longer true - but they are not excluded from the *world*. The
+        context source asks for them separately and renders them as history,
+        which is how the model knows Borveld used to run an inn.
+        """
         query = select(CanonFact).where(
             CanonFact.campaign_id == self._campaign_id,
             CanonFact.retracted.is_(False),
         )
+        if status is not None:
+            query = query.where(CanonFact.status == status)
+        if not include_superseded:
+            query = query.where(CanonFact.superseded_by_id.is_(None))
         if subject_refs:
             query = query.where(CanonFact.subject_ref.in_(subject_refs))
         if not include_secret:
@@ -235,12 +281,104 @@ class MemoryService:
         return list(result.scalars())
 
     async def retract(self, fact_id: uuid.UUID) -> None:
-        """Supersede rather than delete. What the world used to believe is
-        worth keeping."""
+        """This was never true. Mis-extraction, or a mistake being corrected.
+
+        Soft-deleted rather than removed so the row can still be traced back
+        to the turn that produced it, but the model never sees it again.
+        """
         fact = await self._db.get(CanonFact, fact_id)
         if fact is not None:
             fact.retracted = True
             await self._db.flush()
+
+    async def supersede(
+        self,
+        fact_id: uuid.UUID,
+        *,
+        predicate: str | None = None,
+        object_text: str,
+        session_number: int | None = None,
+        secret: bool | None = None,
+    ) -> CanonFact | None:
+        """This WAS true and now is not. The distinction from retraction is
+        the whole point: Borveld really did run that inn, and the fact that he
+        now does not is a thing that *happened* rather than a thing that was
+        wrong. The old fact stays, marked, and is rendered to the model as
+        history so the townspeople can remember the inn.
+        """
+        old = await self._db.get(CanonFact, fact_id)
+        if old is None or old.campaign_id != self._campaign_id:
+            return None
+
+        replacement = CanonFact(
+            campaign_id=self._campaign_id,
+            subject_ref=old.subject_ref,
+            predicate=predicate or old.predicate,
+            object_text=object_text,
+            session_number=session_number,
+            secret=old.secret if secret is None else secret,
+            # A human is performing this edit, so it is canon immediately.
+            status=EntryStatus.ACCEPTED,
+        )
+        self._db.add(replacement)
+        await self._db.flush()
+
+        old.superseded_by_id = replacement.id
+        old.superseded_at_session = session_number
+        await self._db.flush()
+        return replacement
+
+    async def pending(self, *, session_number: int | None = None) -> dict:
+        """The review queue: everything the model proposed and no human has
+        ruled on yet."""
+        entity_q = select(Entity).where(
+            Entity.campaign_id == self._campaign_id,
+            Entity.status == EntryStatus.PROPOSED,
+        )
+        fact_q = select(CanonFact).where(
+            CanonFact.campaign_id == self._campaign_id,
+            CanonFact.status == EntryStatus.PROPOSED,
+            CanonFact.retracted.is_(False),
+        )
+        if session_number is not None:
+            entity_q = entity_q.where(Entity.proposed_in_session == session_number)
+            fact_q = fact_q.where(CanonFact.session_number == session_number)
+        entities = list(
+            (await self._db.execute(entity_q.order_by(desc(Entity.mentions)))).scalars()
+        )
+        facts = list(
+            (await self._db.execute(fact_q.order_by(desc(CanonFact.created_at)))).scalars()
+        )
+        return {"entities": entities, "facts": facts}
+
+    async def transform_entity(
+        self,
+        ref: str,
+        *,
+        summary: str,
+        note: str = "",
+        session_number: int | None = None,
+    ) -> Entity | None:
+        """Change what an entry says while keeping what it used to say.
+
+        The counterpart to editing in place. Correcting a wrong entry should
+        leave no trace; recording that the world changed should leave nothing
+        but. Same gesture in the UI, opposite treatment in context.
+        """
+        entity = await self.entity_by_ref(ref)
+        if entity is None:
+            return None
+        entity.history = [
+            *entity.history,
+            {
+                "session": session_number,
+                "summary": entity.summary,
+                "note": note,
+            },
+        ]
+        entity.summary = summary
+        await self._db.flush()
+        return entity
 
     # ------------------------------------------------------------ seeding
 
@@ -355,6 +493,10 @@ class DatabaseContextSource:
         The ContextSource interface is synchronous because the builder is; the
         async work happens here and the accessors read the cache.
         """
+        # Accepted entries only. A proposal sitting in the review queue is
+        # not yet part of the world, and feeding it to the model would defeat
+        # the point of the queue - the model would build on material the GM is
+        # about to throw away.
         entities = await self._memory.entities()
         # In-play first, then whatever comes up most often.
         in_play = [e for e in entities if e.ref in self._in_play]
@@ -363,6 +505,13 @@ class DatabaseContextSource:
 
         refs = [e.ref for e in selected]
         facts = await self._memory.facts(subject_refs=refs or None)
+        # Superseded facts are no longer true, and the model still needs them:
+        # the world remembers that Borveld ran an inn before he died. Rendered
+        # separately as history so they cannot be mistaken for current canon.
+        history = await self._memory.facts(
+            subject_refs=refs or None,
+            include_superseded=True,
+        )
 
         self._cache["entities"] = [
             EntityBrief(
@@ -371,6 +520,8 @@ class DatabaseContextSource:
                 name=e.name,
                 summary=e.summary,
                 disposition=str(e.state.get("disposition") or "") or None,
+                # What this entry used to say, most recent first.
+                was=[str(h.get("summary") or "") for h in reversed(e.history)][:2],
             )
             for e in selected
         ]
@@ -380,10 +531,23 @@ class DatabaseContextSource:
             )
             for f in facts[:MAX_FACTS]
         ]
+        self._cache["superseded"] = [
+            CanonFactView(
+                subject=f.subject_ref,
+                predicate=f.predicate,
+                object=f.object_text,
+                superseded_at=f.superseded_at_session,
+            )
+            for f in history
+            if f.superseded_by_id is not None
+        ][:MAX_FACTS]
         self._cache["summaries"] = [
             SummaryView(level=s.level, label=s.title, text=s.body)
             for s in await self._memory.summaries()
         ]
+
+    def superseded_facts(self, session_id: str) -> list[CanonFactView]:
+        return self._cache.get("superseded", [])  # type: ignore[return-value]
 
     def canon_for_scene(
         self, session_id: str, scene_id: str

@@ -38,6 +38,8 @@ from typing import Protocol
 # whether the campaign is three sessions old or three hundred.
 DEFAULT_BUDGET = {
     "primer": 2_000,
+    "superseded": 600,
+    "directives": 600,
     "canon": 1_500,
     "entities": 1_500,
     "history": 2_000,
@@ -62,6 +64,9 @@ class CanonFact:
     predicate: str
     object: str
     established_at: str = ""
+    # Set when this fact used to be true and no longer is. Rendered as history
+    # rather than as canon, which is what stops it reading as a contradiction.
+    superseded_at: int | None = None
 
     def render(self) -> str:
         return f"{self.subject} {self.predicate} {self.object}"
@@ -76,12 +81,19 @@ class EntityBrief:
     name: str
     summary: str
     disposition: str | None = None
+    # Earlier states, newest first. Present when the entry was transformed
+    # rather than corrected - the world changed, and it is worth remembering
+    # what it changed from.
+    was: tuple[str, ...] = ()
 
     def render(self) -> str:
         head = f"[{self.id}] {self.name} ({self.kind})"
         if self.disposition:
             head += f" - {self.disposition}"
-        return f"{head}: {self.summary}"
+        body = f"{head}: {self.summary}"
+        if self.was:
+            body += " (previously: " + "; ".join(self.was) + ")"
+        return body
 
 
 @dataclass(frozen=True)
@@ -108,7 +120,16 @@ class ContextPacket:
     # own words - enters play without falling out of the window: it is pinned
     # here every turn rather than trusted to a giant first prompt.
     primer: str = ""
+    # The session's intended destination and how hard to steer toward it.
+    destination: str = ""
+    pressure: str = "light"
+    pacing: str = ""
+    # Campaign-level arc the sessions hang off.
+    arc: str = ""
+    # Standing corrections from the GM. Highest authority in the packet.
+    directives: list[str] = field(default_factory=list)
     canon: list[CanonFact] = field(default_factory=list)
+    superseded: list[CanonFact] = field(default_factory=list)
     entities: list[EntityBrief] = field(default_factory=list)
     history: list[Summary] = field(default_factory=list)
     previous: list[Exchange] = field(default_factory=list)
@@ -133,6 +154,19 @@ class ContextPacket:
                 "## Established facts\n"
                 "These are settled. Do not contradict them; if the player "
                 "assumes otherwise, correct them in the fiction.\n" + facts
+            )
+
+        if self.superseded:
+            past = "\n".join(
+                f"- {f.render()}"
+                + (f" (until session {f.superseded_at})" if f.superseded_at else "")
+                for f in self.superseded
+            )
+            blocks.append(
+                "## No longer true\n"
+                "These WERE true and have since changed. Do not state them as "
+                "current. Do remember them: the world and the people in it "
+                "recall how things used to be.\n" + past
             )
 
         if self.entities:
@@ -161,6 +195,50 @@ class ContextPacket:
             lines = "\n".join(f"{e.speaker}: {e.text}" for e in self.recent)
             blocks.append("## Immediately before now\n" + lines)
 
+        if self.arc:
+            blocks.append(
+                "## Where the campaign is going\n"
+                "The long arc. Not this session's business, but nothing "
+                "should foreclose it.\n" + self.arc
+            )
+
+        if self.destination and self.pressure != "off":
+            steer = {
+                "light": (
+                    "Steer gently. Put opportunities in their path that lead "
+                    "there and let them be ignored - the party may refuse, and "
+                    "refusing must stay a real option."
+                ),
+                "firm": (
+                    "Steer hard. The world is converging on this: events "
+                    "arrive, people show up, doors close behind them. They may "
+                    "still choose HOW they arrive, never whether."
+                ),
+            }.get(self.pressure, "Steer gently.")
+            block = (
+                "## Where this session should end up\n"
+                f"{self.destination}\n\n{steer}\n\n"
+                "This is a destination, not a script. Never narrate the party "
+                "toward it against a stated choice, never refuse what they "
+                "attempt because it points elsewhere, and never mention that "
+                "you are steering. Arriving somewhere near it is a success; "
+                "railroading them into it exactly is a failure."
+            )
+            if self.pacing:
+                block += f"\n\nPacing: {self.pacing}"
+            blocks.append(block)
+
+        # Last, because it is read last and outranks everything above it.
+        if self.directives:
+            lines = "\n".join(f"- {d}" for d in self.directives)
+            blocks.append(
+                "## Standing corrections from the game master\n"
+                "These override anything else in this prompt, including "
+                "established facts. They were written by the human running "
+                "this table because you got something wrong. Follow them "
+                "exactly and do not comment on them.\n" + lines
+            )
+
         return "\n\n".join(blocks)
 
     def estimated_tokens(self) -> int:
@@ -172,6 +250,7 @@ class ContextSource(Protocol):
     properly in Milestone 4 - the interface does not change."""
 
     def canon_for_scene(self, session_id: str, scene_id: str) -> list[CanonFact]: ...
+    def superseded_facts(self, session_id: str) -> list[CanonFact]: ...
     def entities_in_play(self, session_id: str, scene_id: str) -> list[EntityBrief]: ...
     def summary_ladder(self, session_id: str) -> list[Summary]: ...
     def previous_session(self, session_id: str) -> list[Exchange]: ...
@@ -189,12 +268,32 @@ class ContextBuilder:
     def build(
         self, source: ContextSource, session_id: str, scene_id: str,
         *, recent_limit: int = 12, primer: str = "",
+        destination: str = "", pressure: str = "light", pacing: str = "",
+        arc: str = "", directives: list[str] | None = None,
     ) -> ContextPacket:
         packet = ContextPacket()
         truncated: dict[str, int] = {}
 
         cap = self._budget["primer"] * CHARS_PER_TOKEN
         packet.primer = primer.strip()[:cap]
+        packet.destination = destination.strip()[:2_000]
+        packet.pressure = pressure
+        packet.pacing = pacing.strip()[:300]
+        packet.arc = arc.strip()[:2_000]
+        # Directives are the GM overriding the model. Bounded like everything
+        # else, but from the NEWEST end - the correction you wrote thirty
+        # seconds ago matters more than one from session two, which has
+        # probably been superseded by the campaign moving on.
+        packet.directives, truncated["directives"] = self._fit(
+            list(reversed(directives or [])),
+            self._budget["directives"], lambda d: d,
+        )
+
+        packet.superseded, truncated["superseded"] = self._fit(
+            source.superseded_facts(session_id)
+            if hasattr(source, "superseded_facts") else [],
+            self._budget["superseded"], lambda f: f.render(),
+        )
 
         packet.canon, truncated["canon"] = self._fit(
             source.canon_for_scene(session_id, scene_id),
@@ -258,6 +357,9 @@ class InMemoryContextSource:
 
     def canon_for_scene(self, session_id: str, scene_id: str) -> list[CanonFact]:
         return list(self.canon)
+
+    def superseded_facts(self, session_id: str) -> list[CanonFact]:
+        return []
 
     def entities_in_play(self, session_id: str, scene_id: str) -> list[EntityBrief]:
         return list(self.entities)

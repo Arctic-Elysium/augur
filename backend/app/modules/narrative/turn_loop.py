@@ -133,8 +133,10 @@ class TurnInput:
     # answers it, the characters never hear it, and it is never canon.
     ooc: str = ""
     # Names canon has on record - entities plus party members. What give_item
-    # checks player-asserted items against.
+    # checks player-asserted items against when the gate is on.
     established_refs: tuple[str, ...] = ()
+    # Off by default at the campaign level; see TurnScope.allow_player_grants.
+    allow_player_grants: bool = True
 
 
 @dataclass
@@ -225,6 +227,7 @@ class TurnLoop:
             clocks=dict(turn.clocks),
             player_text=f"{turn.text}\n{turn.ooc}",
             established=turn.established_refs,
+            allow_player_grants=turn.allow_player_grants,
         )
 
     def _player_message(self, turn: TurnInput) -> str:
@@ -278,9 +281,7 @@ class TurnLoop:
             )
 
             if not result.tool_calls:
-                turns_resolved.labels(
-                    play_mode="solo", outcome="ok"
-                ).inc()
+                turns_resolved.labels(play_mode="table", outcome="ok").inc()
                 return TurnOutcome(
                     narration=_strip_repetition(result.text),
                     tool_calls=recorded,
@@ -300,7 +301,7 @@ class TurnLoop:
             remaining = MAX_CALLS_PER_TURN - len(recorded)
             if remaining <= 0:
                 turns_resolved.labels(
-                    play_mode="solo", outcome="call_budget_exhausted"
+                    play_mode="table", outcome="call_budget_exhausted"
                 ).inc()
                 raise UpstreamError(
                     f"turn made more than {MAX_CALLS_PER_TURN} tool calls"
@@ -357,7 +358,7 @@ class TurnLoop:
                 Message(role="user", content=tool_results),
             ]
 
-        turns_resolved.labels(play_mode="solo", outcome="tool_loop_exhausted").inc()
+        turns_resolved.labels(play_mode="table", outcome="tool_loop_exhausted").inc()
         raise UpstreamError(
             f"turn did not resolve within {MAX_TOOL_ROUNDS} rounds of tool calls"
         )

@@ -46,6 +46,10 @@ export function PlayTab() {
   // Off by default: the log is the page, and an index that opens itself makes
   // the prose look secondary to its own table of contents.
   const [showScenes, setShowScenes] = useState(false);
+  // Which narration block the GM is rewriting, and the text they are writing.
+  const [amending, setAmending] = useState<{ turnId: string; text: string } | null>(
+    null,
+  );
 
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -132,6 +136,33 @@ export function PlayTab() {
 
   const append = (entry: NewEntry) =>
     setEntries((prev) => [...prev, { ...entry, index: prev.length } as Entry]);
+
+  /** Rewrite what Augur said. No model call: the record is the GM's, and the
+   *  cheapest correction available is the one that just replaces the text. */
+  const saveAmend = async () => {
+    if (!amending || !session) return;
+    const { turnId, text } = amending;
+    setAmending(null);
+    try {
+      await api.sessions.amendTurn(turnId, text);
+      setEntries(toEntries(await api.sessions.turns(session.id), kinds, names));
+    } catch {
+      /* the log still shows the old text; nothing was lost */
+    }
+  };
+
+  /** Regenerate the prose. The dice, damage and locks all stand - a redo that
+   *  re-rolled would be a retry-farm wearing a friendlier name. */
+  const redo = async (turnId: string, note: string) => {
+    if (!session) return;
+    setBusy(true);
+    try {
+      await api.sessions.redoTurn(turnId, note);
+      setEntries(toEntries(await api.sessions.turns(session.id), kinds, names));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const send = async () => {
     const text = input.trim();
@@ -280,7 +311,22 @@ export function PlayTab() {
                   </p>
                 )}
                 {visible.map((entry, i) => (
-                  <LogRow key={entry.id} entry={entry} index={startIndex + i} />
+                  <LogRow
+                    key={entry.id}
+                    entry={entry}
+                    index={startIndex + i}
+                    readOnly={readOnly}
+                    amending={amending}
+                    onAmendStart={(turnId, text) =>
+                      setAmending({ turnId, text })
+                    }
+                    onAmendChange={(text) =>
+                      setAmending((a) => (a ? { ...a, text } : a))
+                    }
+                    onAmendSave={() => void saveAmend()}
+                    onAmendCancel={() => setAmending(null)}
+                    onRedo={(turnId, note) => void redo(turnId, note)}
+                  />
                 ))}
               </div>
               <div className="log__pad" style={{ height: padBottom }} />
@@ -362,7 +408,30 @@ export function PlayTab() {
 }
 
 /** One row per entry. `data-turn-index` is what the windowing hook measures. */
-function LogRow({ entry, index }: { entry: Entry; index: number }) {
+function LogRow({
+  entry,
+  index,
+  readOnly = false,
+  amending = null,
+  onAmendStart,
+  onAmendChange,
+  onAmendSave,
+  onAmendCancel,
+  onRedo,
+}: {
+  entry: Entry;
+  index: number;
+  readOnly?: boolean;
+  amending?: { turnId: string; text: string } | null;
+  onAmendStart?: (turnId: string, text: string) => void;
+  onAmendChange?: (text: string) => void;
+  onAmendSave?: () => void;
+  onAmendCancel?: () => void;
+  onRedo?: (turnId: string, note: string) => void;
+}) {
+  const turnId = entry.kind === "narration" ? entry.turnId ?? null : null;
+  const editing = Boolean(turnId && amending?.turnId === turnId);
+
   return (
     <div className="turn" data-turn-index={index}>
       <div className="turn__time" />
@@ -389,7 +458,52 @@ function LogRow({ entry, index }: { entry: Entry; index: number }) {
             </p>
           </>
         )}
-        {entry.kind === "narration" && <p className="turn__prose">{entry.text}</p>}
+        {entry.kind === "narration" && !editing && (
+          <>
+            <p className="turn__prose">{entry.text}</p>
+            {!readOnly && turnId && (
+              <div className="turn__tools">
+                <button
+                  className="linkish"
+                  onClick={() => onAmendStart?.(turnId, entry.text)}
+                >
+                  amend
+                </button>
+                <button
+                  className="linkish"
+                  onClick={() => {
+                    const note = window.prompt(
+                      "What was wrong with it? (optional — this is passed to Augur)",
+                      "",
+                    );
+                    if (note !== null) onRedo?.(turnId, note);
+                  }}
+                >
+                  redo
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {entry.kind === "narration" && editing && (
+          <div className="turn__amend">
+            <textarea
+              className="field__input"
+              rows={6}
+              autoFocus
+              value={amending?.text ?? ""}
+              onChange={(e) => onAmendChange?.(e.target.value)}
+            />
+            <div className="actions">
+              <button className="btn" onClick={() => onAmendCancel?.()}>
+                Cancel
+              </button>
+              <button className="btn btn--go" onClick={() => onAmendSave?.()}>
+                Save
+              </button>
+            </div>
+          </div>
+        )}
         {entry.kind === "roll" && <DiceReadout roll={entry.roll} />}
         {entry.kind === "event" && (
           <span className={`eventline ${entry.bad ? "eventline--bad" : ""}`}>

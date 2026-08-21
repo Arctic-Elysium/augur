@@ -77,7 +77,7 @@ export function Workspace() {
         <div className="tabbar__identity">
           <span className="tabbar__name">{context.campaign.name}</span>
           <span className="label">
-            {context.campaign.play_mode} · {roster.length}{" "}
+            {roster.length}{" "}
             {roster.length === 1 ? "character" : "characters"}
           </span>
         </div>

@@ -20,7 +20,6 @@ from app.modules.campaigns.models import (
     Campaign,
     CampaignMember,
     CampaignRole,
-    PlayMode,
 )
 from app.modules.identity.models import User
 from app.modules.identity.service import IdentityService
@@ -32,7 +31,6 @@ router = APIRouter()
 class CampaignCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     premise: str | None = None
-    play_mode: PlayMode = PlayMode.SOLO
     # 'core' was the Milestone 0 placeholder this field used to default to.
     # Migration 0007 repaired the rows it produced - and then every new
     # campaign recreated the bug, because the repair fixed the data and not
@@ -51,7 +49,6 @@ class CampaignOut(BaseModel):
     id: uuid.UUID
     name: str
     premise: str | None
-    play_mode: PlayMode
     status: str
 
     model_config = {"from_attributes": True}
@@ -72,7 +69,6 @@ async def create_campaign(
         owner_id=user.id,
         name=payload.name,
         premise=payload.premise,
-        play_mode=payload.play_mode,
         ruleset_id=payload.ruleset_id,
         settings=settings,
     )
@@ -84,6 +80,93 @@ async def create_campaign(
         )
     )
     return campaign
+
+
+class SettingsIn(BaseModel):
+    """Everything that steers the model, in one place.
+
+    Stored in `settings` JSONB rather than as columns so these can evolve
+    without a migration each time - which matters here because directives in
+    particular are a list nobody can size in advance.
+    """
+
+    primer: str | None = Field(default=None, max_length=60_000)
+    tone: str | None = Field(default=None, max_length=400)
+    # The long arc. Sessions hang off it; nothing should foreclose it.
+    arc: str | None = Field(default=None, max_length=4_000)
+    # Standing corrections. "Borveld is dead - never voice him." The fix for
+    # drift that recurs, as opposed to drift you catch once and amend.
+    directives: list[str] | None = Field(default=None, max_length=40)
+    debug_prompts: bool | None = None
+    # When false, the engine refuses items a player named that canon has never
+    # heard of. Default true: with a human approving durable writes, this is
+    # taste, not safety, and taste belongs to the person at the table.
+    allow_player_grants: bool | None = None
+
+
+@router.patch("/{campaign_id}/settings")
+async def update_settings(
+    campaign_id: uuid.UUID, payload: SettingsIn, db: DbDep, principal: PrincipalDep
+) -> dict:
+    _, user = await _campaign_and_user(db, principal, campaign_id)
+    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    campaign = await db.get(Campaign, campaign_id)
+    if campaign is None:
+        raise NotFoundError("campaign not found")
+
+    settings = dict(campaign.settings or {})
+    for key in ("primer", "tone", "arc"):
+        value = getattr(payload, key)
+        if value is not None:
+            cleaned = value.strip()
+            if cleaned:
+                settings[key] = cleaned
+            else:
+                settings.pop(key, None)
+    if payload.directives is not None:
+        settings["directives"] = [
+            d.strip() for d in payload.directives if d.strip()
+        ][:40]
+    if payload.debug_prompts is not None:
+        settings["debug_prompts"] = payload.debug_prompts
+    if payload.allow_player_grants is not None:
+        settings["allow_player_grants"] = payload.allow_player_grants
+
+    # Reassigned rather than mutated: SQLAlchemy does not track in-place edits
+    # to a JSONB dict, and a mutation here would silently never persist.
+    campaign.settings = settings
+    await db.flush()
+    return settings
+
+
+@router.get("/{campaign_id}/settings")
+async def get_settings(
+    campaign_id: uuid.UUID, db: DbDep, principal: PrincipalDep
+) -> dict:
+    campaign, user = await _campaign_and_user(db, principal, campaign_id)
+    access = await resolve_access(db, user.id, campaign_id)
+    settings = dict(campaign.settings or {})
+    if not access.runs_the_game:
+        # The primer, the arc and the destination are the GM's prep. Handing
+        # them to a player is handing them the answers.
+        for key in ("primer", "arc", "directives", "debug_prompts"):
+            settings.pop(key, None)
+    return settings
+
+
+async def _campaign_and_user(db, principal, campaign_id: uuid.UUID):
+    user = await IdentityService(db).get_by_subject(principal.subject)
+    if user is None:
+        raise NotFoundError("campaign not found")
+    result = await db.execute(
+        select(Campaign)
+        .join(CampaignMember, CampaignMember.campaign_id == Campaign.id)
+        .where(Campaign.id == campaign_id, CampaignMember.user_id == user.id)
+    )
+    campaign = result.scalar_one_or_none()
+    if campaign is None:
+        raise NotFoundError("campaign not found")
+    return campaign, user
 
 
 @router.get("", response_model=list[CampaignOut])

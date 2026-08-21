@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { api, type Campaign, type PlayMode } from "../lib/api";
+import { api, type Campaign } from "../lib/api";
 
-const MODES: { value: PlayMode; label: string; note: string }[] = [
-  { value: "solo", label: "Solo", note: "You run the party. Augur runs the world." },
-  { value: "party", label: "Party", note: "Several players, Augur as GM." },
-  { value: "table", label: "Table", note: "A human GM, Augur assisting." },
-];
+// There used to be a mode picker here: Solo / Party / Table. It encoded who
+// runs the game, which campaign roles already encode — solo is one person
+// holding owner+gm+player, a table is a GM and several players. Two
+// representations of one fact is how they drift apart, so the enum went and
+// the seating arrangement is now just who you invite.
 
 export function CampaignList() {
   const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
@@ -17,7 +17,6 @@ export function CampaignList() {
   const [premise, setPremise] = useState("");
   const [primer, setPrimer] = useState("");
   const [showPrimer, setShowPrimer] = useState(false);
-  const [mode, setMode] = useState<PlayMode>("solo");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<Campaign | null>(null);
   const [joinCode, setJoinCode] = useState("");
@@ -47,7 +46,6 @@ export function CampaignList() {
       await api.campaigns.create({
         name: name.trim(),
         premise: premise.trim() || undefined,
-        play_mode: mode,
         primer: primer.trim() || undefined,
       });
       setName("");
@@ -169,24 +167,6 @@ export function CampaignList() {
             </label>
           )}
 
-          <fieldset className="field">
-            <legend className="field__label">Mode</legend>
-            <div className="choices">
-              {MODES.map((m) => (
-                <button
-                  key={m.value}
-                  type="button"
-                  className={`choice ${mode === m.value ? "choice--on" : ""}`}
-                  onClick={() => setMode(m.value)}
-                  aria-pressed={mode === m.value}
-                >
-                  <span className="choice__label">{m.label}</span>
-                  <span className="choice__note">{m.note}</span>
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
           <div className="actions">
             <button className="btn btn--go" onClick={() => void create()} disabled={busy}>
               {busy ? "Creating" : "Create campaign"}
@@ -212,7 +192,7 @@ export function CampaignList() {
                   to={`/campaigns/${c.id}`}
                   style={{ display: "grid", gap: 5, textDecoration: "none", color: "inherit" }}
                 >
-                  <span className="card__eyebrow">{c.play_mode}</span>
+                  <span className="card__eyebrow">{c.ruleset_id ?? "d20"}</span>
                   <span className="card__title">{c.name}</span>
                   <span className="card__body">{c.premise ?? "No premise set."}</span>
                 </Link>

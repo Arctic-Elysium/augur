@@ -28,6 +28,7 @@ from app.modules.narrative.turn_loop import TurnInput, TurnLoop, strip_repetitio
 from app.modules.sessions.models import PlaySession, SessionStatus, Turn
 from app.modules.sessions.service import SessionService
 from app.modules.memory.extraction import Extractor
+from app.modules.campaigns.access import resolve_access
 from app.modules.memory.service import DatabaseContextSource, MemoryService
 from app.modules.memory.summarize import Summarizer
 from app.platform.ai.context import ContextBuilder
@@ -40,6 +41,10 @@ class SessionOut(BaseModel):
     campaign_id: uuid.UUID
     number: int
     status: str
+    destination: str | None = None
+    pressure: str = "light"
+    destination_clock_id: str | None = None
+    destination_reached: bool = False
     scene_id: str
     active_character_id: uuid.UUID | None
     title: str | None = None
@@ -86,6 +91,15 @@ async def _authorize(db, principal, campaign_id: uuid.UUID) -> Campaign:
     return campaign
 
 
+async def _authorize_user(db, principal, campaign_id: uuid.UUID):
+    """Like `_authorize`, but also hands back the user - needed wherever a
+    GM-only action has to resolve access rights."""
+    user = await IdentityService(db).get_by_subject(principal.subject)
+    if user is None:
+        raise ForbiddenError("no such user")
+    return await _authorize(db, principal, campaign_id), user
+
+
 @router.post("", response_model=SessionOut, status_code=201)
 async def start_session(
     payload: StartSession, request: Request, db: DbDep, principal: PrincipalDep
@@ -118,6 +132,12 @@ async def start_session(
                 context=ContextBuilder().build(
                     source, str(session.id), session.scene_id,
                     primer=(campaign.settings or {}).get("primer", ""),
+                    arc=(campaign.settings or {}).get("arc", ""),
+                    directives=list(
+                        (campaign.settings or {}).get("directives", [])
+                    ),
+                    destination=session.destination or "",
+                    pressure=session.pressure or "light",
                 ),
                 tone=(campaign.settings or {}).get("tone", "Grounded and grim."),
             )
@@ -171,6 +191,9 @@ async def list_sessions(
             title=s.title, summary=s.summary,
             created_at=s.created_at, ended_at=s.ended_at,
             turn_count=counts.get(s.id, 0),
+            destination=s.destination, pressure=s.pressure,
+            destination_clock_id=s.destination_clock_id,
+            destination_reached=s.destination_reached,
         )
         for s in sessions
     ]
@@ -260,6 +283,148 @@ async def end_session(
     return await service.end(session_id, summary=summary)
 
 
+class DestinationIn(BaseModel):
+    destination: str | None = Field(default=None, max_length=4000)
+    pressure: str | None = Field(default=None, pattern="^(off|light|firm)$")
+    destination_clock_id: str | None = Field(default=None, max_length=120)
+    destination_reached: bool | None = None
+
+
+@router.patch("/{session_id}/destination", response_model=SessionOut)
+async def set_destination(
+    session_id: uuid.UUID,
+    payload: DestinationIn,
+    db: DbDep,
+    principal: PrincipalDep,
+) -> PlaySession:
+    """Where this sitting should end up, and how hard to steer.
+
+    GM-only: this is the strongest single lever on what the model does, and
+    handing it to every player at a table would mean four people quietly
+    pulling the session in four directions.
+    """
+    service = SessionService(db)
+    session = await service.get(session_id)
+    _, user = await _authorize_user(db, principal, session.campaign_id)
+    (await resolve_access(db, user.id, session.campaign_id)).require_gm()
+
+    if payload.destination is not None:
+        session.destination = payload.destination.strip() or None
+    if payload.pressure is not None:
+        session.pressure = payload.pressure
+    if payload.destination_clock_id is not None:
+        session.destination_clock_id = payload.destination_clock_id or None
+    if payload.destination_reached is not None:
+        session.destination_reached = payload.destination_reached
+    await db.flush()
+    return session
+
+
+class AmendIn(BaseModel):
+    narration: str = Field(min_length=1, max_length=20_000)
+
+
+@router.patch("/turns/{turn_id}/narration", response_model=dict)
+async def amend_turn(
+    turn_id: uuid.UUID, payload: AmendIn, db: DbDep, principal: PrincipalDep
+) -> dict:
+    """Rewrite what the model said. The record is the GM's.
+
+    The cheapest correction there is - no model call, no cost, instant - and
+    the most direct expression of the GM hat: what is stored is what you
+    wrote, and that is what every later turn reads as context.
+    """
+    turn = await db.get(Turn, turn_id)
+    if turn is None:
+        raise NotFoundError("turn not found")
+    session = await SessionService(db).get(turn.session_id)
+    _, user = await _authorize_user(db, principal, session.campaign_id)
+    (await resolve_access(db, user.id, session.campaign_id)).require_gm()
+
+    turn.narration = payload.narration.strip()
+    turn.prompt_version = f"{turn.prompt_version}+amended"
+    await db.flush()
+    return {"id": str(turn.id), "narration": turn.narration}
+
+
+class RedoIn(BaseModel):
+    note: str = Field(default="", max_length=2000)
+
+
+@router.post("/turns/{turn_id}/redo", response_model=dict)
+async def redo_turn(
+    turn_id: uuid.UUID, request: Request, db: DbDep, principal: PrincipalDep,
+    payload: RedoIn | None = None,
+) -> dict:
+    """Regenerate the prose for a turn. The mechanics stand.
+
+    Deliberately narrow: the dice, the damage and the check locks all persist
+    and only the narration is rewritten. If redo re-rolled, it would be a
+    retry-farm with a friendly name - you could reroll any failed check by
+    calling it drift, which is precisely what the check ledger exists to stop.
+    """
+    turn = await db.get(Turn, turn_id)
+    if turn is None:
+        raise NotFoundError("turn not found")
+    service = SessionService(db)
+    session = await service.get(turn.session_id)
+    campaign, user = await _authorize_user(db, principal, session.campaign_id)
+    (await resolve_access(db, user.id, session.campaign_id)).require_gm()
+
+    party = await service.party(campaign.id)
+    engine = await service.engine_for(session, campaign.ruleset_id)
+    memory = MemoryService(db, campaign.id)
+    source = DatabaseContextSource(
+        memory,
+        previous=await service.previous_session_exchanges(
+            campaign.id, session.number
+        ),
+        recent=await service.recent_exchanges(session.id),
+    )
+    await source.preload()
+    settings = campaign.settings or {}
+
+    resolved = "\n".join(
+        f"- {c['name']}: {c['result']}"
+        for c in (turn.tool_calls or []) if c.get("ok")
+    )
+    note = (payload.note if payload else "") or ""
+    instruction = (
+        f"{turn.player_input}\n\n"
+        "[Rewrite the narration for this turn. These mechanics already "
+        f"resolved - narrate them, do not re-roll]\n{resolved or 'none'}"
+    )
+    if note:
+        instruction += (
+            f"\n\n[The game master rejected your previous narration: {note}]"
+        )
+
+    loop = TurnLoop(request.app.state.ai, engine)
+    narration = await loop.open_scene(
+        TurnInput(
+            session_id=str(session.id),
+            scene_id=session.scene_id,
+            text=instruction,
+            actor_id=str(turn.actor_id) if turn.actor_id else None,
+            party=party,
+            context=ContextBuilder().build(
+                source, str(session.id), session.scene_id,
+                primer=settings.get("primer", ""),
+                arc=settings.get("arc", ""),
+                directives=[*settings.get("directives", []), *([note] if note else [])],
+                destination=session.destination or "",
+                pressure=session.pressure or "light",
+            ),
+            tone=settings.get("tone", "Grounded and grim."),
+        )
+    )
+    turn.narration = strip_repetition(narration)
+    turn.prompt_version = f"{turn.prompt_version}+redo"
+    await db.flush()
+    await db.commit()
+    return {"id": str(turn.id), "narration": turn.narration}
+
+
 @router.get("/{session_id}/turns")
 async def list_turns(
     session_id: uuid.UUID, db: DbDep, principal: PrincipalDep, limit: int = 2000
@@ -273,6 +438,9 @@ async def list_turns(
     )
     return [
         {
+            # The id is what amend and redo address. Without it the client can
+            # render a turn it has no way to correct.
+            "id": str(t.id),
             "ordinal": t.ordinal,
             "actor_id": str(t.actor_id) if t.actor_id else None,
             "player_input": t.player_input,
@@ -301,6 +469,57 @@ async def export_session(
         select(Turn).where(Turn.session_id == session_id).order_by(Turn.ordinal)
     )
     turns = list(result.scalars())
+
+    if format == "prompts":
+        # The debug export: what was actually assembled and sent, turn by
+        # turn. Only populated for turns played while `debug_prompts` was on,
+        # so an empty file means the flag was off, not that nothing happened.
+        captured = [t for t in turns if t.prompt_debug]
+        lines = [
+            f"# {campaign.name} — Session {session.number} — prompt capture",
+            "",
+            f"{len(captured)} of {len(turns)} turns captured.",
+            "",
+        ]
+        if not captured:
+            lines.append(
+                "No turns were captured. Turn on `debug_prompts` in campaign "
+                "settings and play a turn; capture is not retroactive."
+            )
+        for turn in captured:
+            debug = turn.prompt_debug or {}
+            lines += [
+                f"## Turn {turn.ordinal}",
+                "",
+                f"- prompt version: `{debug.get('prompt_version', '')}`",
+                f"- context tokens: {debug.get('context_tokens', 0)}",
+                f"- truncated layers: `{json.dumps(debug.get('truncated', {}))}`",
+                "",
+                "### Player input",
+                "",
+                f"> {debug.get('player_input', '')}",
+                "",
+            ]
+            if debug.get("ooc"):
+                lines += ["### Out of character", "", f"> {debug['ooc']}", ""]
+            lines += [
+                "### Assembled context",
+                "",
+                "```",
+                str(debug.get("context", "")),
+                "```",
+                "",
+            ]
+        return Response(
+            content="\n".join(lines),
+            media_type="text/markdown",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{campaign.name}-session-'
+                    f'{session.number}-prompts.md"'
+                )
+            },
+        )
 
     if format == "json":
         return Response(
@@ -408,9 +627,15 @@ async def take_turn(
         recent=await service.recent_exchanges(session.id),
     )
     await source.preload()
+    settings = campaign.settings or {}
     context = ContextBuilder().build(
         source, str(session.id), session.scene_id,
-        primer=(campaign.settings or {}).get("primer", ""),
+        primer=settings.get("primer", ""),
+        arc=settings.get("arc", ""),
+        directives=list(settings.get("directives", [])),
+        destination=session.destination or "",
+        pressure=session.pressure or "light",
+        pacing=_pacing_note(session, clocks),
     )
 
     # ((double parens)) is table talk - the player addressing the GM, not the
@@ -434,6 +659,7 @@ async def take_turn(
         tone=(campaign.settings or {}).get("tone", "Grounded and grim."),
         ooc=ooc,
         established_refs=established,
+        allow_player_grants=settings.get("allow_player_grants", True),
     )
 
     loop = TurnLoop(request.app.state.ai, engine)
@@ -461,6 +687,22 @@ async def take_turn(
 
         narration = strip_repetition(outcome.narration)
 
+        debug = None
+        if settings.get("debug_prompts"):
+            # The assembled packet, not the rendered system prompt: the prompt
+            # is mostly an identical cached prefix every turn, and storing it
+            # 400 times is how you get a 40MB session export that answers
+            # nothing. The packet is the part that actually varies.
+            debug = {
+                "context": context.render(),
+                "context_tokens": context.estimated_tokens(),
+                "truncated": context.truncated,
+                "player_input": payload.text,
+                "fiction": fiction,
+                "ooc": ooc,
+                "prompt_version": outcome.prompt_version,
+            }
+
         await service.save_party(outcome.party_after)
         await service.save_clocks(campaign.id, outcome.clocks)
         await service.persist_locks(campaign.id, engine.ledger)
@@ -475,6 +717,7 @@ async def take_turn(
                 for k, d in outcome.deltas.items()
             ],
             prompt_version=outcome.prompt_version,
+            prompt_debug=debug,
         )
         await db.commit()
 
@@ -506,6 +749,8 @@ async def take_turn(
         extraction = await Extractor(request.app.state.ai).extract(
             narration,
             session_id=str(session.id),
+            # Already ordered by mentions descending, which is what the
+            # extractor's roster truncation needs to be honest.
             known=[e.name for e in known_entities],
         )
 
@@ -536,6 +781,36 @@ async def take_turn(
         events(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def _pacing_note(session, clocks: dict) -> str:
+    """Turn a bound clock into a sentence about how much session is left.
+
+    The model has no sense of duration - it will spend six turns on a
+    conversation in a session meant to end at the docks. A clock it can read
+    gives it the one thing it cannot infer: how much room is left.
+    """
+    clock_id = getattr(session, "destination_clock_id", None)
+    if not clock_id:
+        return ""
+    clock = clocks.get(clock_id)
+    if clock is None or not clock.size:
+        return ""
+    remaining = max(0, clock.size - clock.filled)
+    if remaining == 0:
+        return "The session is at its end. Bring it there now."
+    share = clock.filled / clock.size
+    if share < 0.34:
+        return f"Early. {remaining} segments left before this session should close."
+    if share < 0.75:
+        return (
+            f"Past the middle. {remaining} segments left - start closing "
+            "threads rather than opening them."
+        )
+    return (
+        f"Nearly done: {remaining} segments. Converge. Do not start anything "
+        "that cannot finish."
     )
 
 

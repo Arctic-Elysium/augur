@@ -16,15 +16,31 @@ from app.platform.ai.gateway import Capability, CompletionRequest, Message
 from app.platform.ai.prompts import render_prompt
 from app.platform.ai.router import AIRouter
 
-MAX_ENTITIES_PER_TURN = 4
-MAX_FACTS_PER_TURN = 4
+# Two, not four. Four per turn is 170 entries across a 43-turn session, which
+# is a codex nobody reads and a review queue nobody drains. A turn that truly
+# introduces three durable things is rare; a turn that introduces two is
+# already unusual. Misses get caught the next time the thing is mentioned.
+MAX_ENTITIES_PER_TURN = 2
+MAX_FACTS_PER_TURN = 3
 
 # Words that mark a description rather than a name. A "the" in front is the
 # single clearest signal that the model has extracted a role, not a person.
 _ARTICLES = ("the ", "a ", "an ", "some ", "another ")
 
 # Kinds where an unnamed entry is almost always scenery.
-_NAME_REQUIRED = {"npc", "faction"}
+#
+# This used to be {"npc", "faction"} while the prompt was strict about every
+# kind, so locations, items and creatures bypassed the check entirely and
+# "the alley", "a lamp" and "the grey horse" walked straight into the codex.
+# The prompt alone never holds this line: roles and props recur, so the model
+# has every reason to keep offering them.
+_NAME_REQUIRED = {"npc", "faction", "location", "item", "creature"}
+
+# `concept` has no naming convention to check, so it is filtered by kind
+# instead: it exists for things like "the Ashfell Accord", and in practice it
+# is where the model files anything it could not classify. Unrecognised kinds
+# land here too, via the EntityKind fallback in the service.
+_ALLOWED_KINDS = {"npc", "location", "faction", "item", "creature", "concept"}
 
 
 def _is_named(name: str) -> bool:
@@ -86,7 +102,12 @@ class Extractor:
         # entries. Without it the model names the same guard "the guard", then
         # "cart guard", then "the gate guard" - three slugs, three rows, three
         # separate histories for one person.
-        roster = ", ".join(sorted(known or [])[:80]) or "nothing yet"
+        # Ranked, not alphabetical. `sorted(...)[:80]` looks harmless and is
+        # a dedupe bug that gets worse as the campaign gets longer: past 80
+        # entities everything late in the alphabet silently stops being shown,
+        # so the extractor re-coins those names as new entries and Vareth
+        # splits into a second Vareth. Callers pass most-mentioned first.
+        roster = ", ".join((known or [])[:80]) or "nothing yet"
         system, _ = render_prompt(
             "extract_entities", passage="(see message)", known=roster
         )
@@ -114,7 +135,8 @@ class Extractor:
         entities = [
             e
             for e in extraction.entities
-            if e.kind not in _NAME_REQUIRED or _is_named(e.name)
+            if e.kind in _ALLOWED_KINDS
+            and (e.kind not in _NAME_REQUIRED or _is_named(e.name))
         ][:MAX_ENTITIES_PER_TURN]
 
         # Facts whose subject was filtered out have nothing to attach to.

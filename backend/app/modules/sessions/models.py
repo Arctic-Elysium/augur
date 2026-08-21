@@ -58,6 +58,20 @@ class PlaySession(UUIDPrimaryKey, Timestamped, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Where this sitting should end up, in the GM's own words. Not a script:
+    # the model steers toward it and the party may still walk away. Prep the
+    # destination, improvise the route - which is what a GM actually does, and
+    # the thing the model most obviously cannot do for itself, because it has
+    # no sense of how much session is left.
+    destination: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # How hard the world pushes. `light` seeds opportunities and lets them be
+    # ignored; `firm` has the world converge; `off` disables steering entirely.
+    pressure: Mapped[str] = mapped_column(String(16), default="light")
+    # Optional binding to a clock. Gives the model a mechanical read on pacing
+    # rather than a vibe: half-filled means half a session left.
+    destination_clock_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    destination_reached: Mapped[bool] = mapped_column(Boolean, default=False)
+
 
 class Turn(UUIDPrimaryKey, Timestamped, Base):
     """One exchange: what the player did, what the world did back.
@@ -84,6 +98,11 @@ class Turn(UUIDPrimaryKey, Timestamped, Base):
     deltas: Mapped[list] = mapped_column(JSONB, default=list)
     scene_id: Mapped[str] = mapped_column(String(120), default="opening")
     prompt_version: Mapped[str] = mapped_column(String(32), default="")
+    # What was actually sent to the model this turn, captured only when the
+    # campaign has `debug_prompts` on. Exists to answer "why did it say that"
+    # after the fact, which is otherwise unanswerable once context assembly
+    # has moved on. Null in normal play; this is not a feature of the game.
+    prompt_debug: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
 
 class SessionClock(UUIDPrimaryKey, Timestamped, Base):

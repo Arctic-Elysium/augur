@@ -402,9 +402,19 @@ def _grant(ex, scope, item, **extra):
     )
 
 
+def gated(**overrides):
+    """A scope with the provenance gate ON.
+
+    It is off by default now - a GM who wants to hand themselves a dragon
+    whistle should not have to argue with a regex - but the gate still exists
+    for campaigns that want it, so it still has to be correct about what it
+    detects.
+    """
+    return scope_with(character(), allow_player_grants=False, **overrides)
+
+
 def test_player_invented_item_is_refused():
-    scope = scope_with(
-        character(),
+    scope = gated(
         player_text="I take out my one button atom bomb and nuke the city",
         established=("Borveld", "Vareth", "the Bent Axle"),
     )
@@ -417,8 +427,7 @@ def test_loot_from_a_canon_npc_is_granted():
     """"Borveld's bone-handled knife" names a canon NPC. Looting is the most
     common grant and always overlaps the player's own words - the gate must
     key on canon, not on overlap alone."""
-    scope = scope_with(
-        character(),
+    scope = gated(
         player_text="I take Borveld's knife off his body",
         established=("Borveld", "Vareth"),
     )
@@ -427,11 +436,7 @@ def test_loot_from_a_canon_npc_is_granted():
 
 
 def test_world_provided_item_without_player_mention_is_granted():
-    scope = scope_with(
-        character(),
-        player_text="I search the desk",
-        established=(),
-    )
+    scope = gated(player_text="I search the desk", established=())
     outcome = _grant(executor(), scope, "a sealed letter with dark wax")
     assert outcome.ok
 
@@ -440,10 +445,8 @@ def test_established_in_scene_overrides_the_gate():
     """The escape hatch exists for items the GM's own narration created this
     scene, before extraction has run. The override is recorded in the turn's
     tool calls, so abuse of it is visible in the export."""
-    scope = scope_with(
-        character(),
-        player_text="I pick up the iron key the jailer dropped",
-        established=(),
+    scope = gated(
+        player_text="I pick up the iron key the jailer dropped", established=()
     )
     outcome = _grant(
         executor(), scope, "the jailer's iron key", established_in_scene=True
@@ -454,8 +457,20 @@ def test_established_in_scene_overrides_the_gate():
 def test_gate_is_inert_without_player_text():
     """Turns that never set player_text (older callers, open_scene) must not
     start refusing grants."""
-    outcome = _grant(executor(), scope_with(character()), "a dented tin cup")
+    outcome = _grant(executor(), gated(), "a dented tin cup")
     assert outcome.ok
+
+
+def test_grants_pass_freely_when_the_gate_is_off():
+    """The default. Session 2's atom bomb would be granted now - deliberately,
+    because the GM reviews what sticks and the model is told to make an
+    outsized item cost something rather than refuse it."""
+    scope = scope_with(
+        character(),
+        player_text="I take out my one button atom bomb",
+        established=("Borveld",),
+    )
+    assert _grant(executor(), scope, "One button atom bomb").ok
 
 
 # ------------------------------------------------------------ clock identity

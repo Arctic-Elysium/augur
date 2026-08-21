@@ -59,9 +59,17 @@ class TurnScope:
     situation: Situation | None = None
     # What the player typed this turn, and the names of everything canon knows.
     # Together these let give_item tell world-provided loot from a player
-    # retconning "the spellbook of absolute death" into their own pack.
+    # naming an item into their own pack.
     player_text: str = ""
     established: tuple[str, ...] = ()
+    # Whether a player may speak an item into their own inventory.
+    #
+    # Default ON. The gate that refuses it exists and is correct about what it
+    # detects - session 2 accumulated five player-invented artifacts this way -
+    # but with a human approving every durable write, a heuristic guessing at
+    # intent is the wrong layer to enforce taste at. A GM who wants to hand
+    # themselves a dragon whistle should not have to argue with a regex.
+    allow_player_grants: bool = True
 
     def situation_for(self, actor: Character) -> Situation:
         if self.situation is not None:
@@ -400,8 +408,10 @@ class ToolExecutor:
         item = (arguments.get("item") or "").strip()
         if not item:
             raise ToolRejection("item must not be empty")
-        if self._player_asserted(item, scope) and not arguments.get(
-            "established_in_scene"
+        if (
+            not scope.allow_player_grants
+            and self._player_asserted(item, scope)
+            and not arguments.get("established_in_scene")
         ):
             raise ToolRejection(
                 f"'{item}' was named by the player, not established in the "

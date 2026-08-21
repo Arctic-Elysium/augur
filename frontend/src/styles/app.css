@@ -524,3 +524,32 @@ button { background: none; color: inherit; font-family: inherit; }
 .invite__code { font: 600 17px/1 var(--mono); letter-spacing: .18em; color: var(--gold); }
 .invite__meta { font: 500 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--ink-trace); }
 .joincode { width: 150px; font-family: var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+
+/* ---------- review queue (proposed codex entries awaiting the GM) ---------- */
+/* Sits above the codex rather than in its own tab: the queue is about the
+   codex, and a tab you have to remember to visit is a tab that fills up. */
+.review { border: 1px solid var(--rust); padding: 18px 20px; display: grid; gap: 14px; }
+.review__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; }
+.review__note { margin: 6px 0 0; max-width: 62ch; color: var(--ink-mute); font-size: 13px; }
+.review__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; background: var(--rule-soft); }
+.review__item { background: var(--field); }
+.review__item label { display: grid; grid-template-columns: auto 74px minmax(0, auto) minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 9px 12px; cursor: pointer; }
+.review__kind { font: 500 9px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--ink-trace); }
+.review__name { font-weight: 500; }
+.review__body { color: var(--ink-mute); font-size: 13.5px; min-width: 0; }
+
+/* ---------- session destination ---------- */
+.dest { display: grid; gap: 10px; }
+.dest__pressure { display: flex; gap: 6px; }
+.dest__hint { color: var(--ink-mute); font-size: 13px; max-width: 62ch; }
+
+/* ---------- amend / redo (GM corrections on a narration block) ---------- */
+/* Hidden until hover: these are for the moment something goes wrong, and two
+   buttons under every paragraph would make the log look like an admin panel
+   rather than a story. */
+.turn__tools { display: flex; gap: 14px; margin-top: 4px; opacity: 0; transition: opacity .12s; }
+.turn:hover .turn__tools, .turn:focus-within .turn__tools { opacity: 1; }
+.turn__tools .linkish { font: 500 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .14em; color: var(--ink-trace); }
+.turn__tools .linkish:hover { color: var(--rust); }
+.turn__amend { display: grid; gap: 10px; }
+.checkline { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 7px 0; color: var(--ink-mute); font-size: 13.5px; }

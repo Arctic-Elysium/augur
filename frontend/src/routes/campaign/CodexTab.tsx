@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useOutletContext } from "react-router-dom";
-import { api, type CodexEntity } from "../../lib/api";
+import { api, type CodexEntity, type PendingQueue } from "../../lib/api";
 import type { WorkspaceContext } from "./Workspace";
 
 const KINDS = ["npc", "location", "faction", "item", "creature", "concept"];
@@ -27,12 +27,47 @@ export function CodexTab() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [merging, setMerging] = useState<string | null>(null);
+  const [queue, setQueue] = useState<PendingQueue | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
 
   const reload = () =>
-    api.memory
-      .codex(campaign.id)
-      .then((r) => setEntities(r.entities))
+    Promise.all([
+      api.memory.codex(campaign.id).then((r) => setEntities(r.entities)),
+      api.memory
+        .pending(campaign.id)
+        // Players do not have a queue; a 403 here is expected, not an error.
+        .then(setQueue)
+        .catch(() => setQueue(null)),
+    ]).catch((e) => setError((e as Error).message));
+
+  const toggle = (key: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+
+  const review = (accept: boolean, all = false) => {
+    const body = all
+      ? { all_pending: true }
+      : {
+          entity_refs: [...picked]
+            .filter((k) => k.startsWith("e:"))
+            .map((k) => k.slice(2)),
+          fact_ids: [...picked]
+            .filter((k) => k.startsWith("f:"))
+            .map((k) => k.slice(2)),
+        };
+    const call = accept
+      ? api.memory.accept(campaign.id, body)
+      : api.memory.reject(campaign.id, body);
+    void call
+      .then(() => {
+        setPicked(new Set());
+        return reload();
+      })
       .catch((e) => setError((e as Error).message));
+  };
 
   const run = (p: Promise<unknown>) =>
     void p.then(reload).catch((e) => setError((e as Error).message));
@@ -58,6 +93,73 @@ export function CodexTab() {
         </header>
 
         {error && <p className="notice notice--bad">{error}</p>}
+
+        {queue && (queue.entities.length > 0 || queue.facts.length > 0) && (
+          <section className="review">
+            <header className="review__head">
+              <div>
+                <span className="label label--lit">Waiting on you</span>
+                <p className="review__note">
+                  Augur proposed these. Nothing here reaches the codex, or any
+                  future session, until you accept it — but play is not waiting:
+                  the current session already remembers all of it.
+                </p>
+              </div>
+              <div className="actions">
+                <button
+                  className="btn"
+                  disabled={picked.size === 0}
+                  onClick={() => review(false)}
+                >
+                  Reject {picked.size || ""}
+                </button>
+                <button
+                  className="btn btn--go"
+                  disabled={picked.size === 0}
+                  onClick={() => review(true)}
+                >
+                  Accept {picked.size || ""}
+                </button>
+                <button className="linkish" onClick={() => review(true, true)}>
+                  Accept all
+                </button>
+              </div>
+            </header>
+
+            <ul className="review__list">
+              {queue.entities.map((e) => (
+                <li key={`e:${e.ref}`} className="review__item">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={picked.has(`e:${e.ref}`)}
+                      onChange={() => toggle(`e:${e.ref}`)}
+                    />
+                    <span className="review__kind">{e.kind}</span>
+                    <span className="review__name">{e.name}</span>
+                    <span className="review__body">{e.summary}</span>
+                  </label>
+                </li>
+              ))}
+              {queue.facts.map((f) => (
+                <li key={`f:${f.id}`} className="review__item">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={picked.has(`f:${f.id}`)}
+                      onChange={() => toggle(`f:${f.id}`)}
+                    />
+                    <span className="review__kind">fact</span>
+                    <span className="review__body">
+                      {f.subject_ref.split(":").pop()} {f.predicate}{" "}
+                      {f.object_text}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {!entities && !error && <p className="notice">Loading codex</p>}
 
         {entities && entities.length === 0 && (

@@ -49,7 +49,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.status === 204 ? (undefined as T) : response.json();
 }
 
-export type PlayMode = "solo" | "party" | "table";
 
 export interface Me {
   subject: string;
@@ -63,7 +62,6 @@ export interface Campaign {
   id: string;
   name: string;
   premise: string | null;
-  play_mode: PlayMode;
   status: string;
   ruleset_id?: string;
 }
@@ -123,9 +121,58 @@ export interface PlaySession {
   created_at: string | null;
   ended_at: string | null;
   turn_count: number;
+  destination: string | null;
+  pressure: "off" | "light" | "firm";
+  destination_clock_id: string | null;
+  destination_reached: boolean;
+}
+
+export interface EntityHistory {
+  session: number | null;
+  summary: string;
+  note: string;
+}
+
+export interface PendingEntity {
+  ref: string;
+  kind: string;
+  name: string;
+  summary: string;
+  mentions: number;
+  proposed_in_session: number | null;
+}
+
+export interface PendingFact {
+  id: string;
+  subject_ref: string;
+  predicate: string;
+  object_text: string;
+  session_number: number | null;
+}
+
+export interface PendingQueue {
+  entities: PendingEntity[];
+  facts: PendingFact[];
+}
+
+export interface ReviewBody {
+  entity_refs?: string[];
+  fact_ids?: string[];
+  all_pending?: boolean;
+  session_number?: number;
+}
+
+export interface CampaignSettings {
+  primer?: string;
+  tone?: string;
+  arc?: string;
+  directives?: string[];
+  debug_prompts?: boolean;
+  allow_player_grants?: boolean;
 }
 
 export interface TurnRecord {
+  id?: string;
   ordinal: number;
   actor_id: string | null;
   player_input: string;
@@ -200,7 +247,6 @@ export const api = {
     create: (body: {
       name: string;
       premise?: string;
-      play_mode?: PlayMode;
       primer?: string;
       tone?: string;
     }) =>
@@ -282,6 +328,29 @@ export const api = {
     end: (id: string) =>
       request<PlaySession>(`/sessions/${id}/end`, { method: "POST" }),
     turns: (id: string) => request<TurnRecord[]>(`/sessions/${id}/turns`),
+    setDestination: (
+      id: string,
+      body: {
+        destination?: string;
+        pressure?: "off" | "light" | "firm";
+        destination_clock_id?: string | null;
+        destination_reached?: boolean;
+      },
+    ) =>
+      request<PlaySession>(`/sessions/${id}/destination`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    amendTurn: (turnId: string, narration: string) =>
+      request<{ id: string; narration: string }>(
+        `/sessions/turns/${turnId}/narration`,
+        { method: "PATCH", body: JSON.stringify({ narration }) },
+      ),
+    redoTurn: (turnId: string, note = "") =>
+      request<{ id: string; narration: string }>(
+        `/sessions/turns/${turnId}/redo`,
+        { method: "POST", body: JSON.stringify({ note }) },
+      ),
     rename: (id: string, title: string) =>
       request<PlaySession>(`/sessions/${id}`, {
         method: "PATCH",
@@ -290,7 +359,7 @@ export const api = {
     remove: (id: string) =>
       request<void>(`/sessions/${id}`, { method: "DELETE" }),
     // Not through request(): this returns a file, not JSON.
-    exportUrl: (id: string, format: "md" | "json" = "md") =>
+    exportUrl: (id: string, format: "md" | "json" | "prompts" = "md") =>
       `/api/sessions/${id}/export?format=${format}`,
     spotlight: (id: string, characterId: string | null) =>
       request<PlaySession>(`/sessions/${id}/spotlight`, {
@@ -336,6 +405,87 @@ export const api = {
       }),
     deleteNote: (id: string) =>
       request<void>(`/memory/notes/${id}`, { method: "DELETE" }),
+
+    // ---- review queue, fact editing, supersession ----
+    pending: (campaignId: string, sessionNumber?: number) =>
+      request<PendingQueue>(
+        `/memory/pending?campaign_id=${campaignId}` +
+          (sessionNumber != null ? `&session_number=${sessionNumber}` : ""),
+      ),
+    accept: (campaignId: string, body: ReviewBody) =>
+      request<{ accepted_entities: number; accepted_facts: number }>(
+        `/memory/pending/accept?campaign_id=${campaignId}`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    reject: (campaignId: string, body: ReviewBody) =>
+      request<{ rejected_entities: number; rejected_facts: number }>(
+        `/memory/pending/reject?campaign_id=${campaignId}`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    updateFact: (
+      campaignId: string,
+      factId: string,
+      body: { predicate?: string; object_text?: string; secret?: boolean },
+    ) =>
+      request<{ id: string }>(
+        `/memory/facts/${factId}?campaign_id=${campaignId}`,
+        { method: "PATCH", body: JSON.stringify(body) },
+      ),
+    supersedeFact: (
+      campaignId: string,
+      factId: string,
+      body: { object_text: string; predicate?: string; session_number?: number },
+    ) =>
+      request<{ id: string; supersedes: string }>(
+        `/memory/facts/${factId}/supersede?campaign_id=${campaignId}`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    retractFact: (campaignId: string, factId: string) =>
+      request<void>(`/memory/facts/${factId}?campaign_id=${campaignId}`, {
+        method: "DELETE",
+      }),
+    createFact: (
+      campaignId: string,
+      body: {
+        subject_ref: string;
+        predicate: string;
+        object_text: string;
+        secret?: boolean;
+        session_number?: number;
+      },
+    ) =>
+      request<{ id: string }>(`/memory/facts?campaign_id=${campaignId}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    transformEntity: (
+      campaignId: string,
+      ref: string,
+      body: { summary: string; note?: string; session_number?: number },
+    ) =>
+      request<{ ref: string; summary: string; history: EntityHistory[] }>(
+        `/memory/entities/${ref}/transform?campaign_id=${campaignId}`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    splitEntity: (
+      campaignId: string,
+      ref: string,
+      body: { name: string; kind?: string; summary?: string; fact_ids?: string[] },
+    ) =>
+      request<{ ref: string; moved_facts: number }>(
+        `/memory/entities/${ref}/split?campaign_id=${campaignId}`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+  },
+
+  settings: {
+    get: (campaignId: string) =>
+      request<CampaignSettings>(`/campaigns/${campaignId}/settings`),
+    update: (campaignId: string, body: Partial<CampaignSettings>) =>
+      request<CampaignSettings>(`/campaigns/${campaignId}/settings`, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
   },
 
   rules: {

@@ -10,6 +10,19 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db.base import Base, Timestamped, UUIDPrimaryKey
 
 
+class EntryStatus(str, enum.Enum):
+    """Whether a human has accepted this into canon.
+
+    Only two states, deliberately. A "rejected" state would need a tombstone
+    and a re-proposal policy; deleting instead means the next time the thing
+    genuinely comes up, extraction offers it again - which is exactly what
+    "not now" should mean.
+    """
+
+    PROPOSED = "proposed"
+    ACCEPTED = "accepted"
+
+
 class EntityKind(str, enum.Enum):
     NPC = "npc"
     LOCATION = "location"
@@ -55,6 +68,24 @@ class Entity(UUIDPrimaryKey, Timestamped, Base):
     # an NPC long before the players do, and the Codex must not spoil that.
     known_to_players: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # Whether the GM has accepted this into canon. Orthogonal to
+    # `known_to_players`: that is about the party's knowledge, this is about
+    # the record's authority. Extraction writes PROPOSED; only a human writes
+    # ACCEPTED. Rejection deletes the row - "not now" means the next mention
+    # proposes it again, which is what happens naturally.
+    status: Mapped[EntryStatus] = mapped_column(
+        Enum(EntryStatus, native_enum=False), default=EntryStatus.PROPOSED
+    )
+    proposed_in_session: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # What this entry used to say. Appended to when the entry is transformed
+    # rather than corrected: Borveld ran an inn, then died, then came back
+    # wrong, and the model should know all three in order. A correction edits
+    # in place and leaves no history; a transformation preserves what was.
+    #
+    # Shape: [{"session": 4, "summary": "...", "note": "killed by the party"}]
+    history: Mapped[list] = mapped_column(JSONB, default=list)
+
 
 class CanonFact(UUIDPrimaryKey, Timestamped, Base):
     """A concrete claim the world may not contradict.
@@ -82,9 +113,25 @@ class CanonFact(UUIDPrimaryKey, Timestamped, Base):
     # GM-only facts exist so a prepared adventure can carry its secrets: the
     # model needs to know them to run the scene, the Codex must not show them.
     secret: Mapped[bool] = mapped_column(Boolean, default=False)
-    # Set when a later fact supersedes this one. Never hard-deleted - the
-    # history of what the world used to believe is worth keeping.
+    # Set when the fact was never true - a mis-extraction, a mistake. The
+    # model must never see it again.
     retracted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Proposed by extraction, accepted by a human. Same contract as Entity.
+    status: Mapped[EntryStatus] = mapped_column(
+        Enum(EntryStatus, native_enum=False), default=EntryStatus.PROPOSED
+    )
+
+    # Supersession is not retraction, and conflating them loses the good part.
+    # Retracted: this was never true. Superseded: this WAS true and then
+    # stopped being - Borveld really did run that inn before he died, the
+    # townspeople remember it, and the model should too. A superseded fact is
+    # rendered as history rather than as current canon, and is no longer a
+    # contradiction with the fact that replaced it.
+    superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("canon_facts.id", ondelete="SET NULL"), nullable=True
+    )
+    superseded_at_session: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class SummaryLevel(int, enum.Enum):

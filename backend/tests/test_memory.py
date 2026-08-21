@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.db.base import Base
 from app.modules.base import build_registry
+from app.modules.memory.models import EntryStatus
 from app.modules.memory.service import (
     DatabaseContextSource,
     MemoryService,
@@ -57,8 +58,8 @@ async def memory():
             "VALUES ('u1','s','[]',datetime('now'),datetime('now'))"))
         await db.execute(sa.text(
             "INSERT INTO campaigns "
-            "(id,owner_id,name,ruleset_id,play_mode,status,settings,created_at,updated_at) "
-            "VALUES (:i,'u1','C','d20','solo','active','{}',datetime('now'),datetime('now'))"
+            "(id,owner_id,name,ruleset_id,status,settings,created_at,updated_at) "
+            "VALUES (:i,'u1','C','d20','active','{}',datetime('now'),datetime('now'))"
         ), {"i": str(campaign_id)})
         yield MemoryService(db, campaign_id)
     await engine.dispose()
@@ -229,3 +230,101 @@ async def test_facts_without_a_surviving_subject_are_dropped(memory):
     surviving = [f for f in facts if f.subject.lower() in kept]
     assert len(surviving) == 1
     assert Extraction(entities=entities, facts=surviving).facts[0].subject == "Vorn"
+
+
+# ------------------------------------------------------------ staging
+#
+# The contract: extraction proposes, a human accepts, and nothing the model
+# writes is visible to the model until someone rules on it.
+
+
+async def test_extracted_entities_are_proposed_not_canon(memory):
+    await memory.upsert_entity(kind="npc", name="Borveld", summary="An innkeeper.")
+    # The default read is the one the context source and extractor roster use.
+    assert await memory.entities() == []
+    queue = await memory.pending()
+    assert [e.name for e in queue["entities"]] == ["Borveld"]
+
+
+async def test_accepted_entity_becomes_visible(memory):
+    await memory.upsert_entity(kind="npc", name="Borveld")
+    entity = (await memory.pending())["entities"][0]
+    entity.status = EntryStatus.ACCEPTED
+    assert [e.name for e in await memory.entities()] == ["Borveld"]
+
+
+async def test_re_mention_never_demotes_an_accepted_entity(memory):
+    """A queue that refills with things you already approved is a queue you
+    stop draining."""
+    await memory.upsert_entity(kind="npc", name="Borveld", status=EntryStatus.ACCEPTED)
+    await memory.upsert_entity(kind="npc", name="Borveld", summary="Still here.")
+    assert (await memory.pending())["entities"] == []
+    assert len(await memory.entities()) == 1
+
+
+async def test_staging_and_secrecy_are_independent(memory):
+    """Two axes, deliberately: accepted-but-secret is a prepared adventure's
+    whole working model, and staged-but-public is every ordinary proposal."""
+    await memory.upsert_entity(
+        kind="npc", name="Serel", status=EntryStatus.ACCEPTED,
+        known_to_players=False,
+    )
+    assert len(await memory.entities()) == 1
+    assert await memory.entities(known_only=True) == []
+
+
+# ------------------------------------------------------------ supersession
+
+
+async def test_supersede_keeps_the_old_fact_as_history(memory):
+    """Borveld really did run that inn. The townspeople remember it, and so
+    should the model - which is what separates this from retraction."""
+    await memory.upsert_entity(
+        kind="npc", name="Borveld", status=EntryStatus.ACCEPTED
+    )
+    old = await memory.add_fact(
+        subject_ref="npc:borveld", predicate="runs", object_text="the Bent Axle",
+        status=EntryStatus.ACCEPTED,
+    )
+    await memory.supersede(
+        old.id, predicate="is", object_text="a lich", session_number=4
+    )
+
+    current = [f.object_text for f in await memory.facts()]
+    assert current == ["a lich"]
+
+    history = [
+        f for f in await memory.facts(include_superseded=True)
+        if f.superseded_by_id is not None
+    ]
+    assert [f.object_text for f in history] == ["the Bent Axle"]
+    assert history[0].superseded_at_session == 4
+
+
+async def test_retracted_fact_is_gone_from_both_reads(memory):
+    """Retraction means it was never true. No history is worth keeping in a
+    mistake."""
+    await memory.upsert_entity(
+        kind="npc", name="Borveld", status=EntryStatus.ACCEPTED
+    )
+    fact = await memory.add_fact(
+        subject_ref="npc:borveld", predicate="is", object_text="a dragon",
+        status=EntryStatus.ACCEPTED,
+    )
+    await memory.retract(fact.id)
+    assert await memory.facts() == []
+    assert await memory.facts(include_superseded=True) == []
+
+
+async def test_transform_entity_preserves_what_it_used_to_say(memory):
+    await memory.upsert_entity(
+        kind="npc", name="Borveld", summary="Runs the Bent Axle.",
+        status=EntryStatus.ACCEPTED,
+    )
+    entity = await memory.transform_entity(
+        "npc:borveld", summary="Risen as a lich.",
+        note="killed by the party", session_number=4,
+    )
+    assert entity.summary == "Risen as a lich."
+    assert entity.history[0]["summary"] == "Runs the Bent Axle."
+    assert entity.history[0]["note"] == "killed by the party"

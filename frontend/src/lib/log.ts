@@ -37,7 +37,16 @@ export type NewEntry<T = Entry> = T extends Entry ? Omit<T, "index"> : never;
 
 export type Entry =
   | { id: string; kind: "action"; index: number; speaker: string; text: string }
-  | { id: string; kind: "narration"; index: number; text: string }
+  // `turnId` is what amend and redo address. Absent on live-streamed
+  // narration: the turn row does not exist yet, and there is nothing to
+  // rewrite until it is durable. It arrives on the next refetch.
+  | {
+      id: string;
+      kind: "narration";
+      index: number;
+      text: string;
+      turnId?: string;
+    }
   | { id: string; kind: "roll"; index: number; roll: Roll }
   | { id: string; kind: "event"; index: number; text: string; bad?: boolean }
   | { id: string; kind: "scene"; index: number; text: string };
@@ -144,6 +153,7 @@ export function toEntries(
             id: `t${turn.ordinal}-n${i}`,
             kind: "narration",
             text: para.trim(),
+            turnId: turn.id,
           });
         }
       }
