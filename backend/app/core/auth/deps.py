@@ -25,12 +25,30 @@ async def current_principal(request: Request, settings: SettingsDep) -> OIDCPrin
 PrincipalDep = Annotated[OIDCPrincipal, Depends(current_principal)]
 
 
+def is_platform_admin(principal: OIDCPrincipal, settings: Settings) -> bool:
+    """Derived from the verified token, never from a stored flag.
+
+    A database column saying "this user is an admin" outlives the IdP group
+    that justified it: revoke someone in Voidauth and the row keeps letting
+    them in. Re-reading the claim means access follows the directory.
+    """
+    return principal.in_any_group(settings.oidc_admin_groups)
+
+
 async def require_admin(
     principal: PrincipalDep, settings: SettingsDep
 ) -> OIDCPrincipal:
-    if not principal.in_group(settings.oidc_admin_group):
+    if not is_platform_admin(principal, settings):
         raise ForbiddenError("admin group required")
     return principal
+
+
+async def admin_flag(principal: PrincipalDep, settings: SettingsDep) -> bool:
+    """Admin-ness as a plain bool, for endpoints that widen rather than gate."""
+    return is_platform_admin(principal, settings)
+
+
+AdminFlagDep = Annotated[bool, Depends(admin_flag)]
 
 
 AdminDep = Annotated[OIDCPrincipal, Depends(require_admin)]

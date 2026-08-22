@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { SessionProvider } from "./lib/session";
 import { AppShell } from "./routes/AppShell";
 import { CampaignList } from "./routes/CampaignList";
+import { AdminCampaigns } from "./routes/AdminCampaigns";
 import { Workspace } from "./routes/campaign/Workspace";
 import { PlayTab } from "./routes/campaign/PlayTab";
 import { PartyTab } from "./routes/campaign/PartyTab";
@@ -21,6 +22,7 @@ createRoot(document.getElementById("root")!).render(
         <Routes>
           <Route element={<AppShell />}>
             <Route index element={<CampaignList />} />
+            <Route path="admin" element={<AdminCampaigns />} />
             <Route path="campaigns/:campaignId" element={<Workspace />}>
               <Route index element={<PlayTab />} />
               <Route path="party" element={<PartyTab />} />

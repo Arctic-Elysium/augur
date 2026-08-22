@@ -11,6 +11,8 @@ Tome security review, do not relax them:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import base64
 import hashlib
 import secrets
@@ -37,6 +39,14 @@ class OIDCPrincipal:
 
     def in_group(self, group: str) -> bool:
         return group in self.groups
+
+    def in_any_group(self, groups: "Sequence[str]") -> bool:
+        """Membership of any one of several groups.
+
+        Admin rights are configured as a list because the group that already
+        exists in the IdP is rarely the name an app would have chosen.
+        """
+        return any(g in self.groups for g in groups)
 
 
 @dataclass(frozen=True)

@@ -19,7 +19,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from app.core.auth.deps import DbDep, PrincipalDep
+from app.core.auth.deps import DbDep, PrincipalDep, is_platform_admin
+from app.core.config.settings import get_settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.characters.models import Character as CharacterRow
@@ -77,6 +78,26 @@ class SpotlightIn(BaseModel):
 
 async def _authorize(db, principal, campaign_id: uuid.UUID) -> Campaign:
     """Membership check. Every play endpoint goes through this."""
+    campaign, _ = await campaign_for(db, principal, campaign_id)
+    return campaign
+
+
+async def _authorize_user(db, principal, campaign_id: uuid.UUID):
+    """Like `_authorize`, but also hands back the user - needed wherever a
+    GM-only action has to resolve access rights."""
+    return await campaign_for(db, principal, campaign_id)
+
+async def campaign_for(db, principal, campaign_id: uuid.UUID):
+    """Resolve a campaign for this principal, or 404.
+
+    Membership is the normal path. A platform administrator resolves any
+    campaign, which is the whole point of the admin view - being able to open
+    a test campaign somebody else owns without joining it and polluting its
+    member list.
+
+    The 404 for everyone else is deliberate and unchanged: telling a stranger
+    that a campaign exists but is not theirs leaks its existence.
+    """
     user = await IdentityService(db).get_by_subject(principal.subject)
     if user is None:
         raise ForbiddenError("no such user")
@@ -86,18 +107,12 @@ async def _authorize(db, principal, campaign_id: uuid.UUID) -> Campaign:
         .where(Campaign.id == campaign_id, CampaignMember.user_id == user.id)
     )
     campaign = result.scalar_one_or_none()
+    if campaign is None and is_platform_admin(principal, get_settings()):
+        campaign = await db.get(Campaign, campaign_id)
     if campaign is None:
         raise NotFoundError("campaign not found")
-    return campaign
+    return campaign, user
 
-
-async def _authorize_user(db, principal, campaign_id: uuid.UUID):
-    """Like `_authorize`, but also hands back the user - needed wherever a
-    GM-only action has to resolve access rights."""
-    user = await IdentityService(db).get_by_subject(principal.subject)
-    if user is None:
-        raise ForbiddenError("no such user")
-    return await _authorize(db, principal, campaign_id), user
 
 
 @router.post("", response_model=SessionOut, status_code=201)
@@ -306,7 +321,7 @@ async def set_destination(
     service = SessionService(db)
     session = await service.get(session_id)
     _, user = await _authorize_user(db, principal, session.campaign_id)
-    (await resolve_access(db, user.id, session.campaign_id)).require_gm()
+    (await resolve_access(db, user.id, session.campaign_id, principal=principal)).require_gm()
 
     if payload.destination is not None:
         session.destination = payload.destination.strip() or None
@@ -339,7 +354,7 @@ async def amend_turn(
         raise NotFoundError("turn not found")
     session = await SessionService(db).get(turn.session_id)
     _, user = await _authorize_user(db, principal, session.campaign_id)
-    (await resolve_access(db, user.id, session.campaign_id)).require_gm()
+    (await resolve_access(db, user.id, session.campaign_id, principal=principal)).require_gm()
 
     turn.narration = payload.narration.strip()
     turn.prompt_version = f"{turn.prompt_version}+amended"
@@ -369,7 +384,7 @@ async def redo_turn(
     service = SessionService(db)
     session = await service.get(turn.session_id)
     campaign, user = await _authorize_user(db, principal, session.campaign_id)
-    (await resolve_access(db, user.id, session.campaign_id)).require_gm()
+    (await resolve_access(db, user.id, session.campaign_id, principal=principal)).require_gm()
 
     party = await service.party(campaign.id)
     engine = await service.engine_for(session, campaign.ruleset_id)

@@ -50,6 +50,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 
+export interface AdminCampaign {
+  id: string;
+  name: string;
+  premise: string | null;
+  ruleset_id: string;
+  status: string;
+  owner_subject: string;
+  owner_display_name: string | null;
+  members: number;
+  sessions: number;
+  turns: number;
+  last_played_at: string | null;
+  created_at: string | null;
+  is_member: boolean;
+}
+
 export interface Me {
   subject: string;
   email: string | null;
@@ -244,6 +260,10 @@ export const api = {
   campaigns: {
     list: () => request<Campaign[]>("/campaigns"),
     get: (id: string) => request<Campaign>(`/campaigns/${id}`),
+    adminAll: (includeArchived = false) =>
+      request<AdminCampaign[]>(
+        `/campaigns/admin/all?include_archived=${includeArchived}`,
+      ),
     create: (body: {
       name: string;
       premise?: string;

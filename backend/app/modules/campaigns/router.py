@@ -5,9 +5,9 @@ from datetime import datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from app.core.auth.deps import DbDep, PrincipalDep
+from app.core.auth.deps import AdminDep, DbDep, PrincipalDep
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.modules.campaigns.access import (
     Access,
@@ -20,9 +20,12 @@ from app.modules.campaigns.models import (
     Campaign,
     CampaignMember,
     CampaignRole,
+    CampaignStatus,
 )
 from app.modules.identity.models import User
+from app.modules.identity.models import User
 from app.modules.identity.service import IdentityService
+from app.modules.sessions.models import PlaySession, Turn
 from app.modules.rules import registry
 
 router = APIRouter()
@@ -109,7 +112,7 @@ async def update_settings(
     campaign_id: uuid.UUID, payload: SettingsIn, db: DbDep, principal: PrincipalDep
 ) -> dict:
     _, user = await _campaign_and_user(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     campaign = await db.get(Campaign, campaign_id)
     if campaign is None:
         raise NotFoundError("campaign not found")
@@ -144,7 +147,7 @@ async def get_settings(
     campaign_id: uuid.UUID, db: DbDep, principal: PrincipalDep
 ) -> dict:
     campaign, user = await _campaign_and_user(db, principal, campaign_id)
-    access = await resolve_access(db, user.id, campaign_id)
+    access = await resolve_access(db, user.id, campaign_id, principal=principal)
     settings = dict(campaign.settings or {})
     if not access.runs_the_game:
         # The primer, the arc and the destination are the GM's prep. Handing
@@ -214,7 +217,7 @@ async def _access(db, principal, campaign_id: uuid.UUID) -> Access:
     user = await IdentityService(db).get_by_subject(principal.subject)
     if user is None:
         raise NotFoundError("campaign not found")
-    return await resolve_access(db, user.id, campaign_id)
+    return await resolve_access(db, user.id, campaign_id, principal=principal)
 
 
 @router.get("/{campaign_id}/members", response_model=list[MemberOut])
@@ -397,3 +400,115 @@ async def get_campaign(
     if campaign is None:
         raise NotFoundError("campaign not found")
     return campaign
+
+
+# ------------------------------------------------------------------- admin
+#
+# Deliberately a separate surface from `GET /campaigns`. Merging every
+# campaign on the deployment into the normal list would mean the page you use
+# to delete your own campaigns is also the page showing other people's, and
+# the two should never be one keystroke apart.
+
+
+class AdminCampaignOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    premise: str | None
+    ruleset_id: str
+    status: str
+    owner_subject: str
+    owner_display_name: str | None
+    members: int
+    sessions: int
+    turns: int
+    last_played_at: datetime | None
+    created_at: datetime | None
+    # Whether the admin viewing this is also a member. Lets the UI mark the
+    # difference between "yours" and "someone else's" at a glance.
+    is_member: bool
+
+
+@router.get("/admin/all", response_model=list[AdminCampaignOut])
+async def admin_list_campaigns(
+    db: DbDep, principal: AdminDep, include_archived: bool = False
+) -> list[AdminCampaignOut]:
+    """Every campaign on the deployment.
+
+    Guarded by AdminDep, which re-reads the group claim from the verified
+    token on every request - so removing someone from the admin group in
+    Voidauth revokes this immediately rather than at their next login.
+    """
+    me = await IdentityService(db).get_by_subject(principal.subject)
+
+    query = (
+        select(
+            Campaign,
+            User.subject,
+            User.display_name,
+            func.count(func.distinct(CampaignMember.id)).label("members"),
+        )
+        .join(User, User.id == Campaign.owner_id)
+        .outerjoin(CampaignMember, CampaignMember.campaign_id == Campaign.id)
+        .group_by(Campaign.id, User.subject, User.display_name)
+        .order_by(Campaign.created_at.desc())
+    )
+    if not include_archived:
+        query = query.where(Campaign.status != CampaignStatus.ARCHIVED)
+    rows = (await db.execute(query)).all()
+
+    # Play volume per campaign, which is what actually distinguishes a real
+    # campaign from the seven test ones - a name never does.
+    counts = {
+        row.campaign_id: row
+        for row in (
+            await db.execute(
+                select(
+                    PlaySession.campaign_id,
+                    func.count(func.distinct(PlaySession.id)).label("sessions"),
+                    func.count(Turn.id).label("turns"),
+                    func.max(Turn.created_at).label("last_played_at"),
+                )
+                .outerjoin(Turn, Turn.session_id == PlaySession.id)
+                .group_by(PlaySession.campaign_id)
+            )
+        ).all()
+    }
+
+    mine = set()
+    if me is not None:
+        mine = {
+            row[0]
+            for row in (
+                await db.execute(
+                    select(CampaignMember.campaign_id).where(
+                        CampaignMember.user_id == me.id
+                    )
+                )
+            ).all()
+        }
+
+    out: list[AdminCampaignOut] = []
+    for campaign, subject, display_name, members in rows:
+        play = counts.get(campaign.id)
+        out.append(
+            AdminCampaignOut(
+                id=campaign.id,
+                name=campaign.name,
+                premise=campaign.premise,
+                ruleset_id=campaign.ruleset_id,
+                status=(
+                    campaign.status.value
+                    if hasattr(campaign.status, "value")
+                    else str(campaign.status)
+                ),
+                owner_subject=subject,
+                owner_display_name=display_name,
+                members=members or 0,
+                sessions=getattr(play, "sessions", 0) or 0,
+                turns=getattr(play, "turns", 0) or 0,
+                last_played_at=getattr(play, "last_played_at", None),
+                created_at=campaign.created_at,
+                is_member=campaign.id in mine,
+            )
+        )
+    return out

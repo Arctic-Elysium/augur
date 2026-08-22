@@ -553,3 +553,11 @@ button { background: none; color: inherit; font-family: inherit; }
 .turn__tools .linkish:hover { color: var(--rust); }
 .turn__amend { display: grid; gap: 10px; }
 .checkline { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 7px 0; color: var(--ink-mute); font-size: 13.5px; }
+
+/* ---------- admin: all campaigns ---------- */
+/* Someone else's campaign is dimmed rather than highlighted. The rows you
+   should hesitate over are the ones that do NOT look like home. */
+.row--foreign { background: color-mix(in srgb, var(--rust) 4%, transparent); }
+.grid__name { display: block; font-weight: 500; }
+.grid__sub { display: block; color: var(--ink-mute); font-size: 12.5px; margin-top: 2px; max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid__tag { margin-left: 8px; font: 500 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--ink-trace); }

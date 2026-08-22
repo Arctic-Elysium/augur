@@ -39,7 +39,13 @@ class Settings(BaseSettings):
     oidc_scopes: list[str] = ["openid", "profile", "email", "groups"]
     oidc_redirect_path: str = "/api/auth/callback"
     oidc_groups_claim: str = "groups"
+    # Platform administration. A list, not a single group, because the group
+    # that exists in an IdP is rarely the one an app picked as its default -
+    # here, `auth_admins`. Membership is re-read from the verified token on
+    # every request, so removing someone from the group in Voidauth revokes
+    # them immediately; nothing is cached in the database.
     oidc_admin_group: str = "augur-admins"
+    oidc_admin_groups: list[str] = ["augur-admins", "auth_admins"]
 
     # Session cookie signing. MUST be overridden outside local.
     session_secret: str = ""

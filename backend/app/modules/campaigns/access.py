@@ -73,6 +73,11 @@ class Access:
     campaign: Campaign
     user_id: uuid.UUID
     role: CampaignRole
+    # Platform administrator viewing a campaign they are not a member of.
+    # Kept as a separate field rather than folded into `role` so the question
+    # "who actually owns this" stays answerable - an admin is standing in the
+    # GM's shoes, not wearing their name.
+    is_admin: bool = False
 
     @property
     def is_owner(self) -> bool:
@@ -81,22 +86,36 @@ class Access:
     @property
     def runs_the_game(self) -> bool:
         """Owner or GM. Sees what the world is hiding, and everyone's sheets."""
-        return self.role in (CampaignRole.OWNER, CampaignRole.GM)
+        return self.is_admin or self.role in (CampaignRole.OWNER, CampaignRole.GM)
 
     @property
     def can_play(self) -> bool:
-        return self.role in (
+        return self.is_admin or self.role in (
             CampaignRole.OWNER,
             CampaignRole.GM,
             CampaignRole.PLAYER,
         )
+
+    @property
+    def reads_private_notes(self) -> bool:
+        """Nobody, ever, including admins.
+
+        The journal's own model docstring is the argument: a journal you
+        suspect someone is reading is a journal you stop being honest in. An
+        admin backdoor would quietly make that promise false, and for
+        debugging a campaign you would never want the notes anyway.
+        """
+        return False
 
     def require_gm(self) -> None:
         if not self.runs_the_game:
             raise ForbiddenError("only the game master can do that")
 
     def require_owner(self) -> None:
-        if not self.is_owner:
+        # Admins pass. Being able to see every test campaign but not delete
+        # one is half a feature, and the operator of the deployment is already
+        # trusted with the database it sits on.
+        if not (self.is_owner or self.is_admin):
             raise ForbiddenError("only the campaign owner can do that")
 
     def require_play(self) -> None:
@@ -105,21 +124,54 @@ class Access:
 
 
 async def resolve_access(
-    db: AsyncSession, user_id: uuid.UUID, campaign_id: uuid.UUID
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    campaign_id: uuid.UUID,
+    *,
+    principal: object | None = None,
+    is_admin: bool = False,
 ) -> Access:
-    """The single gate. Every campaign-scoped endpoint goes through this."""
+    """The single gate. Every campaign-scoped endpoint goes through this.
+
+    Pass `principal` and admin-ness is derived from the verified token's group
+    claim. It is deliberately NOT read from `users.last_groups`: that column is
+    a display cache, and authorising against it would mean revoking someone in
+    Voidauth left them with working access until their next login.
+    """
+    if principal is not None and not is_admin:
+        from app.core.auth.deps import is_platform_admin
+        from app.core.config.settings import get_settings
+
+        # get_settings is lru_cached, so this is a dict lookup, not a reparse.
+        is_admin = is_platform_admin(principal, get_settings())
+
     result = await db.execute(
         select(Campaign, CampaignMember)
         .join(CampaignMember, CampaignMember.campaign_id == Campaign.id)
         .where(Campaign.id == campaign_id, CampaignMember.user_id == user_id)
     )
     row = result.first()
-    if row is None:
-        # Deliberately the same error as a missing campaign: telling a stranger
-        # that a campaign exists but is not theirs leaks its existence.
-        raise NotFoundError("campaign not found")
-    campaign, member = row
-    return Access(campaign=campaign, user_id=user_id, role=member.role)
+    if row is not None:
+        campaign, member = row
+        return Access(
+            campaign=campaign, user_id=user_id, role=member.role,
+            is_admin=is_admin,
+        )
+
+    if is_admin:
+        # An administrator standing in a campaign they never joined. Given the
+        # OBSERVER role so that no membership is implied anywhere that reads
+        # `role` directly; the rights come from `is_admin` instead.
+        campaign = await db.get(Campaign, campaign_id)
+        if campaign is not None:
+            return Access(
+                campaign=campaign, user_id=user_id,
+                role=CampaignRole.OBSERVER, is_admin=True,
+            )
+
+    # Deliberately the same error as a missing campaign: telling a stranger
+    # that a campaign exists but is not theirs leaks its existence.
+    raise NotFoundError("campaign not found")
 
 
 def new_code() -> str:

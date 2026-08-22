@@ -79,7 +79,7 @@ async def _access(db, principal, campaign_id: uuid.UUID) -> Access:
     user = await IdentityService(db).get_by_subject(principal.subject)
     if user is None:
         raise NotFoundError("campaign not found")
-    return await resolve_access(db, user.id, campaign_id)
+    return await resolve_access(db, user.id, campaign_id, principal=principal)
 
 
 async def _member_campaign(db, principal, campaign_id: uuid.UUID) -> Campaign:

@@ -13,7 +13,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.core.auth.deps import DbDep, PrincipalDep
+from app.core.auth.deps import DbDep, PrincipalDep, is_platform_admin
+from app.core.config.settings import get_settings
 from app.core.errors import ForbiddenError, InvalidRequest, NotFoundError
 from app.modules.campaigns.models import Campaign, CampaignMember
 from app.modules.identity.service import IdentityService
@@ -25,6 +26,19 @@ router = APIRouter()
 
 
 async def _authorize(db, principal, campaign_id: uuid.UUID):
+    return await campaign_for(db, principal, campaign_id)
+
+async def campaign_for(db, principal, campaign_id: uuid.UUID):
+    """Resolve a campaign for this principal, or 404.
+
+    Membership is the normal path. A platform administrator resolves any
+    campaign, which is the whole point of the admin view - being able to open
+    a test campaign somebody else owns without joining it and polluting its
+    member list.
+
+    The 404 for everyone else is deliberate and unchanged: telling a stranger
+    that a campaign exists but is not theirs leaks its existence.
+    """
     user = await IdentityService(db).get_by_subject(principal.subject)
     if user is None:
         raise ForbiddenError("no such user")
@@ -34,9 +48,12 @@ async def _authorize(db, principal, campaign_id: uuid.UUID):
         .where(Campaign.id == campaign_id, CampaignMember.user_id == user.id)
     )
     campaign = result.scalar_one_or_none()
+    if campaign is None and is_platform_admin(principal, get_settings()):
+        campaign = await db.get(Campaign, campaign_id)
     if campaign is None:
         raise NotFoundError("campaign not found")
     return campaign, user
+
 
 
 class EntityOut(BaseModel):
@@ -89,7 +106,7 @@ async def codex(
     would spoil the thing the player is trying to find out.
     """
     campaign, user = await _authorize(db, principal, campaign_id)
-    access = await resolve_access(db, user.id, campaign_id)
+    access = await resolve_access(db, user.id, campaign_id, principal=principal)
     memory = MemoryService(db, campaign_id)
 
     # The game master sees what the world is hiding; the table does not. This
@@ -178,7 +195,7 @@ async def update_entity(
     codex - so it has to be fixable without a database client.
     """
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     memory = MemoryService(db, campaign_id)
     entity = await memory.entity_by_ref(entity_ref)
     if entity is None:
@@ -217,7 +234,7 @@ async def delete_entity(
     nothing in the codex explains.
     """
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     memory = MemoryService(db, campaign_id)
     entity = await memory.entity_by_ref(entity_ref)
     if entity is None:
@@ -245,7 +262,7 @@ async def merge_entity(
     is split across two entries.
     """
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     memory = MemoryService(db, campaign_id)
     source = await memory.entity_by_ref(entity_ref)
     target = await memory.entity_by_ref(payload.into_ref)
@@ -352,7 +369,7 @@ async def pending(
     session_number: int | None = None,
 ) -> dict:
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     queue = await MemoryService(db, campaign_id).pending(
         session_number=session_number
     )
@@ -390,7 +407,7 @@ async def accept_pending(
     campaign_id: uuid.UUID, payload: ReviewIn, db: DbDep, principal: PrincipalDep
 ) -> dict:
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     memory = MemoryService(db, campaign_id)
 
     entities, facts = await _selection(memory, payload)
@@ -412,7 +429,7 @@ async def reject_pending(
     permanently blind extraction to something that might become important
     three sessions later."""
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     memory = MemoryService(db, campaign_id)
 
     entities, facts = await _selection(memory, payload)
@@ -460,7 +477,7 @@ async def create_fact(
     the queue exists to defer to, so making them approve their own writing
     would be theatre."""
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     fact = await MemoryService(db, campaign_id).add_fact(
         subject_ref=payload.subject_ref,
         predicate=payload.predicate,
@@ -492,7 +509,7 @@ async def update_fact(
     the edit leaves no trace, because there is no history worth keeping in a
     mistake. When the world changed instead, use supersede."""
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     fact = await db.get(CanonFact, fact_id)
     if fact is None or fact.campaign_id != campaign_id:
         raise NotFoundError("fact not found")
@@ -528,7 +545,7 @@ async def supersede_fact(
     contradiction.
     """
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     replacement = await MemoryService(db, campaign_id).supersede(
         fact_id,
         predicate=payload.predicate,
@@ -547,7 +564,7 @@ async def retract_fact(
     """This was never true. Soft-deleted so it can still be traced to the turn
     that produced it, but the model never sees it again."""
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     fact = await db.get(CanonFact, fact_id)
     if fact is None or fact.campaign_id != campaign_id:
         return
@@ -578,7 +595,7 @@ async def transform_entity(
     when the world moved and the old text is history worth keeping.
     """
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     entity = await MemoryService(db, campaign_id).transform_entity(
         entity_ref,
         summary=payload.summary,
@@ -614,7 +631,7 @@ async def split_entity(
     bad automatic merge is permanent.
     """
     _, user = await _authorize(db, principal, campaign_id)
-    (await resolve_access(db, user.id, campaign_id)).require_gm()
+    (await resolve_access(db, user.id, campaign_id, principal=principal)).require_gm()
     memory = MemoryService(db, campaign_id)
     source = await memory.entity_by_ref(entity_ref)
     if source is None:

@@ -35,6 +35,13 @@ export function AppShell() {
           <NavLink to="/" end className="tab">
             Campaigns
           </NavLink>
+          {/* Only rendered for admins, but the server is the real gate: the
+              endpoint behind this checks the group claim on every request. */}
+          {session.me.isAdmin && (
+            <NavLink to="/admin" className="tab">
+              Admin
+            </NavLink>
+          )}
         </nav>
         <div className="globalnav__meta">
           <span className="globalnav__who">
